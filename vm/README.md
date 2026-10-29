@@ -28,7 +28,7 @@ Notes:
 - The cloud image is pinned to one build and cached in `~/Library/Caches/turtlebot-vm/`. To update, change `IMAGE_SERIAL` / `IMAGE_SHA256` in `create-vm.sh`.
 - If provisioning fails, the VM stays running; log in on its console and check `/var/log/cloud-init-output.log`. `sudo bash /usr/local/sbin/provision.sh <user>` re-runs it.
 - With GPU acceleration on, UTM can't suspend the VM, so closing its window force-kills it. Shut down from inside Ubuntu instead.
-- Robot-specific ROS settings (`ROS_DOMAIN_ID`, `RMW_IMPLEMENTATION`, discovery server) aren't set; copy them from the robot's `/etc/turtlebot4/setup.bash` into `~/.bashrc` in the VM.
+- `provision.sh` sets `ROS_DOMAIN_ID=0` and `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` in `~/.bashrc`, matching the robot's `/etc/turtlebot4/setup.bash` (simple discovery, no discovery server). If you change those on the robot, change them in the VM too.
 
 ## Install media
 

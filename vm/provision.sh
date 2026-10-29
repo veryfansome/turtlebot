@@ -33,6 +33,11 @@ apt-get install -y ros-jazzy-desktop ros-jazzy-turtlebot4-desktop ros-dev-tools
 
 bashrc=/home/$user/.bashrc
 grep -qF /opt/ros/jazzy/setup.bash "$bashrc" || echo 'source /opt/ros/jazzy/setup.bash' >> "$bashrc"
+# Must match the robot's /etc/turtlebot4/setup.bash for ROS 2 discovery to find it.
+grep -qF ROS_DOMAIN_ID "$bashrc" || cat >> "$bashrc" <<'EOF'
+export ROS_DOMAIN_ID=0
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+EOF
 
 rm "$netplan_override"
 # The seed disk is detached after this run; don't let cloud-init reconfigure anything later.
