@@ -17,7 +17,7 @@ Then:
 vm/create-vm.sh
 ```
 
-It prompts for the guest password, then creates a UTM VM named `turtlebot-jazzy` (6 CPUs, 16 GiB RAM, 64 GiB disk, bridged networking, 3D-accelerated display), installs a GNOME desktop, ROS 2 Jazzy, `ros-jazzy-turtlebot4-desktop` and `ros-jazzy-irobot-create-msgs` (to read the Create 3 base's own messages, e.g. `/wheel_status`) via `provision.sh`, and leaves it shut down. Provisioning took about 6 minutes on a fast connection; the VM powers itself off when it's finished. Then start it from the UTM window (select it, press ▶).
+It prompts for the guest password, then creates a UTM VM named `turtlebot-jazzy` (6 CPUs, 16 GiB RAM, 64 GiB disk, bridged networking, 3D-accelerated display), installs a GNOME desktop, ROS 2 Jazzy, `ros-jazzy-turtlebot4-desktop`, `ros-jazzy-irobot-create-msgs` (to read the Create 3 base's own messages, e.g. `/wheel_status`) and `ros-jazzy-turtlebot4-navigation` (SLAM mapping and Nav2, per the [Generating a map](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/generate_map.html) tutorial) via `provision.sh`, and leaves it shut down. Provisioning took about 6 minutes on a fast connection; the VM powers itself off when it's finished. Then start it from the UTM window (select it, press ▶).
 
 Overrides via environment variables: `VM_NAME`, `VM_USER` (defaults to your macOS username), `CPUS`, `MEMORY_MIB`, `DISK_MIB`, `BRIDGE_IF` (defaults to the interface with the default route), `SSH_PUBKEY_FILE`, `VM_PASSWORD`. See the top of `create-vm.sh`.
 
