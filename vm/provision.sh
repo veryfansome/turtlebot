@@ -29,7 +29,8 @@ apt-get install -y /tmp/ros2-apt-source.deb
 
 apt-get update
 apt-get upgrade -y
-apt-get install -y ros-jazzy-desktop ros-jazzy-turtlebot4-desktop ros-dev-tools
+# irobot-create-msgs: needed to read the Create 3 base's topics/services (wheel_status, e_stop, ...)
+apt-get install -y ros-jazzy-desktop ros-jazzy-turtlebot4-desktop ros-jazzy-irobot-create-msgs ros-dev-tools
 
 bashrc=/home/$user/.bashrc
 grep -qF /opt/ros/jazzy/setup.bash "$bashrc" || echo 'source /opt/ros/jazzy/setup.bash' >> "$bashrc"
