@@ -20,7 +20,7 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 
 ### 2. Explore on its own
 
-- [ ] Frontier exploration: drive to the edge between mapped and unmapped space. [m-explore-ros2](https://github.com/robo-friends/m-explore-ros2) (explore_lite) does this on top of Nav2; check whether it needs building from source for Jazzy.
+- [ ] Frontier exploration: drive to the edge between mapped and unmapped space. Our own node, [src/pet_explorer](src/pet_explorer/README.md), so core behavior stays fully under our control; [m-explore-ros2](https://github.com/robo-friends/m-explore-ros2) (explore_lite, not released for Jazzy) is the reference. Written and unit-tested; not yet run on the robot.
 - [ ] Measure progress by how much of the map gets filled in.
 - [ ] While exploring, record camera, position and map data to rosbags, so stages 4 and 5 have data to work with.
 
