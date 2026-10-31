@@ -82,8 +82,11 @@ class SafetyNode(Node):
     def set_reason(self, reason):
         if reason != self.reason:
             self.reason = reason
-            log = self.get_logger().info if reason in ('ok', 'idle', 'no command', 'speed capped') else self.get_logger().warn
-            log(f'Drive: {reason}')
+            # rclpy refuses to log from one line at different severities, so two calls.
+            if reason in ('ok', 'idle', 'no command', 'speed capped'):
+                self.get_logger().info(f'Drive: {reason}')
+            else:
+                self.get_logger().warn(f'Drive: {reason}')
 
     def stop(self):
         self.send(0.0, 0.0)
