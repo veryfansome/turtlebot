@@ -1,4 +1,4 @@
-from pet_drive.safety import BUMP, CLIFF, OK, WHEEL_DROP, Limits, SafetyGate
+from pet_drive.safety import CLIFF, OK, WHEEL_DROP, Limits, SafetyGate
 
 
 def driving_gate(now=0.0):
@@ -59,33 +59,20 @@ def test_stops_on_cliff_or_wheel_drop_while_reported():
         assert gate.output(0.5) == (-0.1, 0.0, OK)
 
 
-def test_bump_pauses_then_allows_only_moves_away():
+def test_bumps_dont_change_commands():
     gate = driving_gate()
-    gate.on_hazards([BUMP], 0.0)
-    gate.on_command(0.2, 0.0, 0.1)
-    assert gate.output(0.1) == (0.0, 0.0, 'bumped')
-    # Still pressed after the pause: no forward, but backing up and turning go through.
-    gate.on_scan(0.6)
-    for t in (0.2, 0.4, 0.6):
-        gate.on_hazards([BUMP], t)
-    gate.on_command(0.2, 1.0, 0.6)
-    assert gate.output(0.6) == (0.0, 1.0, 'bumper pressed: no forward')
-    gate.on_command(-0.1, 0.0, 0.6)
-    assert gate.output(0.6) == (-0.1, 0.0, OK)
+    gate.on_hazards([1], 0.0)  # BUMP
+    gate.on_command(0.2, 0.0, 0.0)
+    assert gate.output(0.0) == (0.2, 0.0, OK)
 
 
-def test_released_bumper_allows_forward_again():
-    gate = driving_gate()
-    gate.on_hazards([BUMP], 0.0)
-    gate.on_scan(1.0)
-    gate.on_command(0.2, 0.0, 1.0)
-    assert gate.output(1.0) == (0.2, 0.0, OK)
-
-
-def test_a_held_bumper_is_one_bump():
-    gate = driving_gate()
-    for t in (0.0, 0.2, 0.4, 0.6):
-        gate.on_hazards([BUMP], t)
-    assert gate.bump_started_at == 0.0
-    gate.on_command(-0.1, 0.0, 0.6)
-    assert gate.output(0.6)[2] == OK
+def test_stops_announce_and_resuming_releases_the_light_ring():
+    from pet_drive.feedback import RESUMED, STOPS, announcement
+    notes, colour = announcement('ok', 'lidar silent')
+    assert notes == STOPS['lidar silent'][0] and colour == (255, 0, 0)
+    assert announcement('lidar silent', 'ok') == (RESUMED, None)
+    # Ordinary starts and ends of driving: a beep when commands stop, nothing when they start.
+    assert announcement('ok', 'no command')[0] == STOPS['no command'][0]
+    assert announcement('no command', 'idle') == (None, None)
+    assert announcement('idle', 'ok') == (None, None)
+    assert announcement('no command', 'ok') == (None, None)

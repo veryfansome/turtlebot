@@ -28,7 +28,7 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 
 ### 2. Learn to drive
 
-- [ ] **Safety layer** ([src/pet_drive](src/pet_drive/README.md)): the only way commands reach the wheels. Caps speeds, stops when commands stop coming, stops on a bump and then allows only moves away from it, stops when the lidar goes quiet, the robot is picked up, or a wheel drops or a cliff is sensed. In progress.
+- [ ] **Safety layer** ([src/pet_drive](src/pet_drive/README.md)): the only way commands reach the wheels. Caps speeds, and stops when commands stop coming, the lidar goes quiet, the robot is picked up, or a wheel drops or a cliff is sensed. Bumps aren't blocked: the robot is built to bump, and the driver learns from them. Built and checked on the robot (2026-10-31): commands, the deadman and reversing work. The base reports a bump only at the moment of contact, so pushing afterwards shows up only as commanded speed without matching motion, which the recorder and reward need to compute.
 - [ ] **Recorder**: log the lidar scan, commanded and actual wheel speeds, bumpers and other hazards, and the SLAM pose, whoever is driving. Commanded vs actual speed is the "wheels spinning but not moving" signal.
 - [ ] **A scripted wander** as a baseline the learned policy has to beat.
 - [ ] **Demonstrations**: drive with the controller through the places Nav2 got stuck (chair legs, the cushion, the floor strip, the couch edge), 20–30 minutes to start.
@@ -73,7 +73,7 @@ The frontier explorer drove Nav2 from 2026-10-29 to 2026-10-31. Its first full r
 - **The collision monitor ate commands.** With `base_shift_correction` on, it needs odometry at each scan's exact time; odometry arrives over Wi-Fi a little later, so it stopped the robot 48 times in one run. Turning it off fixed that.
 - **Invisible obstacles.** Soft cushions don't press the bumper; thin chair legs give the lidar only a few points; a floor strip is under the scan line; a couch edge can be over it. The robot pushed against them for up to a minute.
 - **A held bumper counted once.** Pressed against a chair leg, the bumper never released, so "give up after 2 bumps" never fired.
-- **Nav2's backup didn't reverse** (2/2 tries on 2026-10-31, robot not pinned); not resolved.
+- **Nav2's backup didn't reverse** (2/2 tries on 2026-10-31, robot not pinned), though the robot reverses fine when commanded directly; not resolved.
 
 ## Known issues
 
