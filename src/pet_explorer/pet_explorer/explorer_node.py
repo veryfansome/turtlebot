@@ -2,6 +2,9 @@
 
 Needs slam_toolbox publishing /map, TF from map to the robot, and Nav2's navigate_to_pose action,
 e.g. turtlebot4_navigation's slam.launch.py and nav2.launch.py.
+
+When a goal fails without the robot having moved, it tries short "probe" goals nearby, most open
+space first, until one gets the robot moving, then goes back to frontiers.
 """
 import math
 
@@ -22,6 +25,9 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from pet_explorer.frontiers import (
     cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, goal_cell, world_to_cell,
 )
+from pet_explorer.probes import probe_goals
+
+FRONTIER, PROBE = 'frontier', 'probe'
 
 
 class Explorer(Node):
@@ -37,7 +43,7 @@ class Explorer(Node):
         # Give up if the robot hasn't moved progress_distance (metres) in progress_timeout (seconds),
         # e.g. stuck or spinning in place.
         self.progress_distance = self.declare_parameter('progress_distance', 0.25).value
-        self.progress_timeout = self.declare_parameter('progress_timeout', 20.0).value
+        self.progress_timeout = self.declare_parameter('progress_timeout', 8.0).value
         # Give up after this many bumps on the way to one goal. Low obstacles sit under the lidar's
         # scan plane, so Nav2 can't see them and keeps driving into them.
         self.max_bumps = self.declare_parameter('max_bumps', 2).value
@@ -45,17 +51,28 @@ class Explorer(Node):
         # (seconds). Other parts of the same frontier stay available.
         self.blacklist_radius = self.declare_parameter('blacklist_radius', 0.5).value
         self.blacklist_duration = self.declare_parameter('blacklist_duration', 300.0).value
-        tick_period = self.declare_parameter('tick_period', 1.0).value  # seconds
+        # Probe goals: points this far from the robot (metres), at this many angles, at least
+        # probe_clearance (metres) from obstacles on the map. Each gets probe_timeout (seconds).
+        self.probe_radii = self.declare_parameter('probe_radii', [0.4, 0.7]).value
+        self.probe_angles = self.declare_parameter('probe_angles', 12).value
+        self.probe_clearance = self.declare_parameter('probe_clearance', 0.2).value
+        self.probe_timeout = self.declare_parameter('probe_timeout', 6.0).value
+        tick_period = self.declare_parameter('tick_period', 0.5).value  # seconds
 
         self.map = None  # (grid, origin_xy, resolution)
         self.blacklist = []  # (xy, time it expires)
+        self.goal_kind = None  # FRONTIER or PROBE
         self.goal_xy = None  # set from sending a goal until it finishes or is cancelled
         self.goal_handle = None  # set once Nav2 accepts the goal
         self.goal_sent_at = None
+        self.goal_start_xy = None  # where the robot was when the goal was sent
         self.progress_xy = None  # where the robot was when it last made progress, and when
         self.progress_at = None
+        self.recovering = False  # Nav2 has started recovery behaviours for the current goal
         self.bumps = 0
         self.bumping = False
+        self.stuck_at = None  # set while probing: where the robot got stuck
+        self.probes_tried = []
         self.finished = False
 
         # slam_toolbox publishes the map latched and reliable.
@@ -79,6 +96,13 @@ class Explorer(Node):
             self.get_logger().warn(f'Bumped into something ({self.bumps}/{self.max_bumps})')
         self.bumping = bumping
 
+    def on_feedback(self, msg):
+        # Nav2 only starts recovery behaviours (clearing costmaps, spinning, backing up) once it
+        # can't plan or follow a path, which on this robot has meant it's stuck.
+        if (self.goal_handle is not None and bytes(msg.goal_id.uuid) == bytes(self.goal_handle.goal_id.uuid)
+                and msg.feedback.number_of_recoveries > 0):
+            self.recovering = True
+
     def robot_xy(self):
         try:
             t = self.tf_buffer.lookup_transform(self.global_frame, self.robot_frame, Time())
@@ -100,7 +124,27 @@ class Explorer(Node):
         if not self.nav.server_is_ready():
             self.get_logger().info('Waiting for Nav2 (navigate_to_pose)', throttle_duration_sec=5.0)
             return
+        if self.stuck_at is not None and self.try_probe(robot):
+            return
+        self.go_to_frontier(robot)
 
+    def try_probe(self, robot):
+        """While stuck, send the next probe goal. Returns False once unstuck or out of probes."""
+        if math.dist(robot, self.stuck_at) > self.progress_distance:
+            self.get_logger().info('Moving again; back to frontiers')
+        else:
+            grid, origin, resolution = self.map
+            for xy in probe_goals(grid, origin, resolution, robot, self.probe_radii, self.probe_angles, self.probe_clearance):
+                if all(math.dist(xy, tried) > 0.15 for tried in self.probes_tried):
+                    self.probes_tried.append(xy)
+                    self.send_goal(PROBE, xy, robot, f'Trying nearby spot ({xy[0]:.2f}, {xy[1]:.2f})')
+                    return True
+            self.get_logger().warn(f'Tried {len(self.probes_tried)} nearby spots without moving; back to frontiers')
+        self.stuck_at = None
+        self.probes_tried = []
+        return False
+
+    def go_to_frontier(self, robot):
         now = self.get_clock().now()
         self.blacklist = [(xy, until) for xy, until in self.blacklist if until > now]
         avoid = [xy for xy, _ in self.blacklist]
@@ -121,31 +165,38 @@ class Explorer(Node):
             return
         self.finished = False
         _, xy, size_m = min(candidates)
-        self.send_goal(xy, robot, size_m)
+        self.send_goal(FRONTIER, xy, robot, f'Heading to frontier at ({xy[0]:.2f}, {xy[1]:.2f}), {size_m:.2f} m long')
 
     def check_goal(self, robot):
         """Give up on the current goal if it's stuck, taking too long, or its frontier has been mapped."""
         if self.goal_handle is None:
             return  # Nav2 hasn't accepted it yet
         now = self.get_clock().now()
-        if (now - self.goal_sent_at).nanoseconds / 1e9 > self.goal_timeout:
-            self.cancel_goal('timed out', blacklist=True)
+        timeout = self.probe_timeout if self.goal_kind == PROBE else self.goal_timeout
+        if (now - self.goal_sent_at).nanoseconds / 1e9 > timeout:
+            self.fail_goal(robot, 'timed out')
+            return
+        if self.recovering:
+            self.fail_goal(robot, 'Nav2 started recovery')
             return
         if self.bumps >= self.max_bumps:
-            self.cancel_goal(f'bumped into something {self.bumps} times', blacklist=True)
+            self.fail_goal(robot, f'bumped into something {self.bumps} times')
             return
         if math.dist(robot, self.progress_xy) > self.progress_distance:
             self.progress_xy, self.progress_at = robot, now
         elif (now - self.progress_at).nanoseconds / 1e9 > self.progress_timeout:
-            self.cancel_goal(f'no progress in {self.progress_timeout:.0f} s', blacklist=True)
+            self.fail_goal(robot, f'no progress in {self.progress_timeout:.0f} s')
             return
-        grid, origin, resolution = self.map
-        cell = world_to_cell(self.goal_xy, origin, resolution)
-        radius = max(1, round(self.blacklist_radius / resolution))
-        if not frontier_near(frontier_mask(grid), cell, radius):
-            self.cancel_goal('frontier already mapped', blacklist=False)
+        if self.goal_kind == FRONTIER:
+            grid, origin, resolution = self.map
+            cell = world_to_cell(self.goal_xy, origin, resolution)
+            radius = max(1, round(self.blacklist_radius / resolution))
+            if not frontier_near(frontier_mask(grid), cell, radius):
+                self.get_logger().info('Abandoning frontier: already mapped')
+                self.goal_handle.cancel_goal_async()
+                self.clear_goal()
 
-    def send_goal(self, xy, robot, size_m):
+    def send_goal(self, kind, xy, robot, message):
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = self.global_frame
         goal.pose.header.stamp = self.get_clock().now().to_msg()
@@ -154,47 +205,52 @@ class Explorer(Node):
         yaw = math.atan2(xy[1] - robot[1], xy[0] - robot[0])
         goal.pose.pose.orientation.z = math.sin(yaw / 2)
         goal.pose.pose.orientation.w = math.cos(yaw / 2)
-        self.get_logger().info(f'Heading to frontier at ({xy[0]:.2f}, {xy[1]:.2f}), {size_m:.2f} m long')
+        self.get_logger().info(message)
+        self.goal_kind = kind
         self.goal_xy = xy
         self.goal_sent_at = self.progress_at = self.get_clock().now()
-        self.progress_xy = robot
+        self.goal_start_xy = self.progress_xy = robot
+        self.recovering = False
         self.bumps = 0
-        self.nav.send_goal_async(goal).add_done_callback(self.on_goal_response)
+        self.nav.send_goal_async(goal, feedback_callback=self.on_feedback).add_done_callback(self.on_goal_response)
 
     def on_goal_response(self, future):
         handle = future.result()
         if not handle.accepted:
-            self.get_logger().warn('Nav2 rejected the goal')
-            self.avoid_goal()
-            self.clear_goal()
+            self.fail_goal(self.goal_start_xy, 'Nav2 rejected it', cancel=False)
             return
         self.goal_handle = handle
         handle.get_result_async().add_done_callback(lambda f: self.on_result(handle, f))
 
     def on_result(self, handle, future):
         if handle is not self.goal_handle:
-            return  # a goal we already cancelled
+            return  # a goal we already gave up on
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.get_logger().info('Reached frontier')
+            self.get_logger().info(f'Reached {self.goal_kind}')
+            self.clear_goal()
         else:
-            self.get_logger().warn(f'Nav2 failed to reach the frontier (status {status})')
-            self.avoid_goal()
-        self.clear_goal()
+            robot = self.robot_xy() or self.goal_start_xy
+            self.fail_goal(robot, f'Nav2 failed (status {status})', cancel=False)
 
-    def cancel_goal(self, reason, blacklist):
-        self.get_logger().info(f'Abandoning frontier: {reason}')
-        if blacklist:
-            self.avoid_goal()
-        self.goal_handle.cancel_goal_async()
+    def fail_goal(self, robot, reason, cancel=True):
+        """Give up on the current goal. A failed frontier is avoided for a while, and if the robot
+        never got going, probing starts."""
+        self.get_logger().info(f'Abandoning {self.goal_kind}: {reason}')
+        if self.goal_kind == FRONTIER:
+            until = self.get_clock().now() + Duration(seconds=self.blacklist_duration)
+            self.blacklist.append((self.goal_xy, until))
+            self.get_logger().info(f'Avoiding ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}) for {self.blacklist_duration:.0f} s')
+            if math.dist(robot, self.goal_start_xy) <= self.progress_distance:
+                self.get_logger().info('Stuck; trying nearby spots')
+                self.stuck_at = robot
+                self.probes_tried = []
+        if cancel and self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
         self.clear_goal()
-
-    def avoid_goal(self):
-        until = self.get_clock().now() + Duration(seconds=self.blacklist_duration)
-        self.blacklist.append((self.goal_xy, until))
-        self.get_logger().info(f'Avoiding ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}) for {self.blacklist_duration:.0f} s')
 
     def clear_goal(self):
+        self.goal_kind = None
         self.goal_xy = None
         self.goal_handle = None
         self.goal_sent_at = None
