@@ -3,8 +3,9 @@
 Needs slam_toolbox publishing /map, TF from map to the robot, and Nav2's navigate_to_pose action,
 e.g. turtlebot4_navigation's slam.launch.py and nav2.launch.py.
 
-When a goal fails without the robot having moved, it tries short "probe" goals nearby, most open
-space first, until one gets the robot moving, then goes back to frontiers.
+When a goal fails without the robot having moved, it backs up a little, then tries short "probe"
+goals nearby, most open space first, until one gets the robot moving, then goes back to frontiers.
+If the lidar goes quiet it cancels its goal and holds still until scans come back.
 
 When the robot is picked up (the base's kidnap_status), it stops, pauses SLAM and saves the map
 (SLAM's state and the grid) to map_dir. When it's set down, it resets SLAM to an empty map, turns
@@ -19,9 +20,10 @@ from action_msgs.msg import GoalStatus
 from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector, KidnapStatus
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
-from nav2_msgs.action import NavigateToPose, Spin
+from nav2_msgs.action import BackUp, NavigateToPose, Spin
 from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import LaserScan
 import numpy as np
 import rclpy
 from rclpy.action import ActionClient
@@ -71,6 +73,12 @@ class Explorer(Node):
         self.probe_angles = self.declare_parameter('probe_angles', 12).value
         self.probe_clearance = self.declare_parameter('probe_clearance', 0.2).value
         self.probe_timeout = self.declare_parameter('probe_timeout', 6.0).value
+        # Before probing, back straight up this far (metres; 0 to skip): the way it came was clear,
+        # and it gets the robot off things the lidar can't see (a cushion, a floor strip).
+        self.backup_distance = self.declare_parameter('backup_distance', 0.15).value
+        self.backup_speed = self.declare_parameter('backup_speed', 0.1).value  # m/s
+        # Hold still if no lidar scan has arrived for this long (seconds): Nav2 is blind then.
+        self.scan_timeout = self.declare_parameter('scan_timeout', 3.0).value
         # Pickup handling: where maps are saved, how long to wait after being set down before
         # starting a fresh map (seconds), and whether to turn a full circle first.
         self.map_dir = os.path.expanduser(self.declare_parameter('map_dir', '~/maps').value)
@@ -92,6 +100,10 @@ class Explorer(Node):
         self.bumping = False
         self.stuck_at = None  # set while probing: where the robot got stuck
         self.probes_tried = []
+        self.backup_handle = None  # set while backing up, before probing
+        self.backing_up = False
+        self.last_scan_at = None
+        self.scan_silent = False
         self.finished = False
         self.nav_active = False
         self.nav_state_future = None
@@ -108,12 +120,14 @@ class Explorer(Node):
         self.create_subscription(OccupancyGrid, 'map', self.on_map, map_qos)
         self.create_subscription(HazardDetectionVector, 'hazard_detection', self.on_hazards, qos_profile_sensor_data)
         self.create_subscription(KidnapStatus, 'kidnap_status', self.on_kidnap, qos_profile_sensor_data)
+        self.create_subscription(LaserScan, 'scan', self.on_scan, qos_profile_sensor_data)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         # Nav2's action server appears before Nav2 is active, and rejects goals until then.
         self.nav_state = self.create_client(GetState, 'bt_navigator/get_state')
         self.spin = ActionClient(self, Spin, 'spin')
+        self.backup = ActionClient(self, BackUp, 'backup')
         self.slam_params = self.create_client(GetParameters, 'slam_toolbox/get_parameters')
         self.slam_pause = self.create_client(Pause, 'slam_toolbox/pause_new_measurements')
         self.slam_reset = self.create_client(Reset, 'slam_toolbox/reset')
@@ -148,18 +162,48 @@ class Explorer(Node):
             self.landing = 'settling'
             self.get_logger().warn(f'Set down; starting a fresh map in {self.settle_time:.0f} s')
 
+    def on_scan(self, msg: LaserScan):
+        self.last_scan_at = self.get_clock().now()
+        if self.scan_silent:
+            self.scan_silent = False
+            self.get_logger().info('Lidar scans are back')
+
+    def scan_ok(self):
+        """Whether lidar scans are arriving. Cancels everything when they stop: Nav2 is blind then."""
+        if self.last_scan_at is None:
+            self.get_logger().info('Waiting for the lidar', throttle_duration_sec=5.0)
+            return False
+        silent = (self.get_clock().now() - self.last_scan_at).nanoseconds / 1e9
+        if silent <= self.scan_timeout:
+            return True
+        if not self.scan_silent:
+            self.scan_silent = True
+            self.get_logger().warn(f'Lidar silent for {silent:.0f} s: stopping and holding still until scans come back')
+            self.halt()
+        else:
+            self.get_logger().warn(f'Lidar still silent ({silent:.0f} s)', throttle_duration_sec=10.0)
+        return False
+
+    def halt(self):
+        """Cancel whatever the robot is doing and forget being stuck."""
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+        if self.backup_handle is not None:
+            self.backup_handle.cancel_goal_async()
+            self.backup_handle = None
+        self.backing_up = False
+        self.clear_goal()
+        self.stuck_at = None
+        self.probes_tried = []
+
     def on_lifted(self):
         """Stop, pause SLAM so the view from mid-air doesn't go into the map, and save the map."""
         self.pickups += 1
         self.get_logger().warn(f'Picked up (#{self.pickups}): stopping, pausing SLAM and saving the map')
-        if self.goal_handle is not None:
-            self.goal_handle.cancel_goal_async()
+        self.halt()
         if self.spin_handle is not None:
             self.spin_handle.cancel_goal_async()
             self.spin_handle = None
-        self.clear_goal()
-        self.stuck_at = None
-        self.probes_tried = []
         self.landing = None
         base = self.session_path(f'pickup-{self.pickups}-before')
         self.save_map_grid(base + '.npz')
@@ -297,6 +341,8 @@ class Explorer(Node):
         if self.landing is not None:
             self.continue_landing()
             return
+        if not self.scan_ok():
+            return
         if self.map is None:
             self.get_logger().info('Waiting for the map', throttle_duration_sec=5.0)
             return
@@ -304,6 +350,8 @@ class Explorer(Node):
         if robot is None:
             return
         self.robot_last = robot
+        if self.backing_up:
+            return
         if self.goal_xy is not None:
             self.check_goal(robot)
             return
@@ -453,9 +501,50 @@ class Explorer(Node):
                 self.stuck_at = robot
                 self.probes_tried = []
                 self.clear_costmaps('in case old obstacles are boxing it in')
+                self.start_backup()
         if cancel and self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
         self.clear_goal()
+
+    def start_backup(self):
+        """Back straight up a little; probing starts when it's done (or couldn't be done)."""
+        if self.backup_distance <= 0:
+            return
+        if not self.backup.server_is_ready():
+            self.get_logger().warn("Nav2's backup isn't available; probing without backing up")
+            return
+        goal = BackUp.Goal()
+        goal.target.x = float(self.backup_distance)
+        goal.speed = float(self.backup_speed)
+        goal.time_allowance.sec = math.ceil(3 * self.backup_distance / self.backup_speed)
+        self.backing_up = True
+        self.get_logger().info(f'Backing up {self.backup_distance:.2f} m')
+        self.backup.send_goal_async(goal).add_done_callback(self.on_backup_accepted)
+
+    def on_backup_accepted(self, future):
+        handle = future.result()
+        if not self.backing_up:  # halted in the meantime
+            if handle.accepted:
+                handle.cancel_goal_async()
+            return
+        if not handle.accepted:
+            self.get_logger().warn('Backup rejected; probing')
+            self.backing_up = False
+            return
+        self.backup_handle = handle
+        handle.get_result_async().add_done_callback(lambda f: self.on_backup_done(handle, f))
+
+    def on_backup_done(self, handle, future):
+        if handle is not self.backup_handle:
+            return  # cancelled
+        self.backup_handle = None
+        self.backing_up = False
+        result = future.result()
+        if result.status == GoalStatus.STATUS_SUCCEEDED:
+            self.get_logger().info('Backed up; trying nearby spots')
+        else:
+            reason = result.result.error_msg or f'status {result.status}'
+            self.get_logger().info(f"Couldn't back up ({reason}); trying nearby spots")
 
     def clear_goal(self):
         self.goal_kind = None
