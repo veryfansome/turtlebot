@@ -17,7 +17,10 @@ DISK_MIB=${DISK_MIB:-65536}
 # Host interface to bridge to; defaults to the one carrying the default route (e.g. Wi-Fi).
 BRIDGE_IF=${BRIDGE_IF:-$(route -n get default | awk '/interface:/ {print $2}')}
 # Optional public key to authorize for SSH into the guest.
-SSH_PUBKEY_FILE=${SSH_PUBKEY_FILE:-}
+# Defaults to the project key (see vm/README.md) when it exists; set to "" to authorize none.
+default_pubkey=~/.ssh/turtlebot_ed25519.pub
+[[ -f $default_pubkey ]] || default_pubkey=""
+SSH_PUBKEY_FILE=${SSH_PUBKEY_FILE-$default_pubkey}
 # Set to skip the password prompt.
 VM_PASSWORD=${VM_PASSWORD:-}
 # Repo cloned into ~/turtlebot in the guest and built with colcon.
