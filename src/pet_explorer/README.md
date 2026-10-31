@@ -36,14 +36,13 @@ colcon test --packages-select pet_explorer && colcon test-result --verbose
 
 Undock the robot first: the power saver keeps the lidar and camera off while it's docked. Clear the floor of cables, and block off stairs (the base has cliff sensors, but don't rely on them on the first runs). Stay nearby.
 
-In separate VM terminals:
+Start SLAM, Nav2 and the explorer together:
 
 ```bash
-ros2 launch turtlebot4_navigation slam.launch.py
-ros2 launch turtlebot4_navigation nav2.launch.py params_file:=$HOME/turtlebot/config/nav2.yaml
-ros2 launch turtlebot4_viz view_navigation.launch.py   # optional: watch the map and goals in RViz
-ros2 run pet_explorer explorer
+ros2 launch pet_explorer explore.launch.py rviz:=true
 ```
+
+`rviz:=true` also opens RViz to watch the map and goals. `nav2_params:=...` and `slam_params:=...` swap in other config files.
 
 Nav2 runs with this repo's [config/nav2.yaml](../../config/nav2.yaml), TurtleBot 4's settings with narrower safety margins so it fits through tighter gaps.
 
