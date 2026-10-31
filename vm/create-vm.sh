@@ -20,6 +20,9 @@ BRIDGE_IF=${BRIDGE_IF:-$(route -n get default | awk '/interface:/ {print $2}')}
 SSH_PUBKEY_FILE=${SSH_PUBKEY_FILE:-}
 # Set to skip the password prompt.
 VM_PASSWORD=${VM_PASSWORD:-}
+# Repo cloned into ~/turtlebot in the guest and built with colcon.
+REPO_URL=${REPO_URL:-https://github.com/veryfansome/turtlebot.git}
+REPO_BRANCH=${REPO_BRANCH:-main}
 PROVISION_TIMEOUT_MIN=${PROVISION_TIMEOUT_MIN:-90}
 CACHE_DIR=${CACHE_DIR:-$HOME/Library/Caches/turtlebot-vm}
 
@@ -95,7 +98,7 @@ write_files:
     content: |
 $(sed 's/^/      /' "$SCRIPT_DIR/provision.sh")
 runcmd:
-  - [bash, /usr/local/sbin/provision.sh, $VM_USER]
+  - [bash, /usr/local/sbin/provision.sh, $VM_USER, "$REPO_URL", "$REPO_BRANCH"]
 power_state:
   mode: poweroff
   condition: test -f /var/lib/provision.done

@@ -17,9 +17,9 @@ Then:
 vm/create-vm.sh
 ```
 
-It prompts for the guest password, then creates a UTM VM named `turtlebot-jazzy` (6 CPUs, 16 GiB RAM, 64 GiB disk, bridged networking, 3D-accelerated display), installs a GNOME desktop, ROS 2 Jazzy, `ros-jazzy-turtlebot4-desktop`, `ros-jazzy-irobot-create-msgs` (to read the Create 3 base's own messages, e.g. `/wheel_status`) and `ros-jazzy-turtlebot4-navigation` (SLAM mapping and Nav2, per the [Generating a map](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/generate_map.html) tutorial) via `provision.sh`, and leaves it shut down. Provisioning took about 6 minutes on a fast connection; the VM powers itself off when it's finished. Then start it from the UTM window (select it, press ▶).
+It prompts for the guest password, then creates a UTM VM named `turtlebot-jazzy` (6 CPUs, 16 GiB RAM, 64 GiB disk, bridged networking, 3D-accelerated display), installs a GNOME desktop, ROS 2 Jazzy, `ros-jazzy-turtlebot4-desktop`, `ros-jazzy-irobot-create-msgs` (to read the Create 3 base's own messages, e.g. `/wheel_status`) and `ros-jazzy-turtlebot4-navigation` (SLAM mapping and Nav2, per the [Generating a map](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/generate_map.html) tutorial) via `provision.sh`, clones this repo into `~/turtlebot` and builds its ROS 2 packages (sourced from `~/.bashrc`), and leaves it shut down. Provisioning took about 6 minutes on a fast connection; the VM powers itself off when it's finished. Then start it from the UTM window (select it, press ▶).
 
-Overrides via environment variables: `VM_NAME`, `VM_USER` (defaults to your macOS username), `CPUS`, `MEMORY_MIB`, `DISK_MIB`, `BRIDGE_IF` (defaults to the interface with the default route), `SSH_PUBKEY_FILE`, `VM_PASSWORD`. See the top of `create-vm.sh`.
+Overrides via environment variables: `VM_NAME`, `VM_USER` (defaults to your macOS username), `CPUS`, `MEMORY_MIB`, `DISK_MIB`, `BRIDGE_IF` (defaults to the interface with the default route), `SSH_PUBKEY_FILE`, `VM_PASSWORD`, `REPO_URL`, `REPO_BRANCH` (defaults to `main`). See the top of `create-vm.sh`.
 
 Notes:
 
@@ -27,6 +27,8 @@ Notes:
 - Bridged networking puts the VM on whatever network `BRIDGE_IF` is joined to. The robot must be on that same network (e.g. robot in Wi-Fi client mode on your home network).
 - The cloud image is pinned to one build and cached in `~/Library/Caches/turtlebot-vm/`. To update, change `IMAGE_SERIAL` / `IMAGE_SHA256` in `create-vm.sh`.
 - If provisioning fails, the VM stays running; log in on its console and check `/var/log/cloud-init-output.log`. `sudo bash /usr/local/sbin/provision.sh <user>` re-runs it.
+- The repo is cloned over HTTPS, which works without credentials while it's public. To push from the VM, switch the remote to SSH (`git remote set-url origin git@github.com:veryfansome/turtlebot.git`) and add a key GitHub knows.
+- After pulling changes in `~/turtlebot`, rebuild with `colcon build --symlink-install` there. New terminals pick up the build automatically.
 - With GPU acceleration on, UTM can't suspend the VM, so closing its window force-kills it. Shut down from inside Ubuntu instead.
 - `provision.sh` sets `ROS_DOMAIN_ID=0` and `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` in `~/.bashrc`, matching the robot's `/etc/turtlebot4/setup.bash` (simple discovery, no discovery server). If you change those on the robot, change them in the VM too.
 
