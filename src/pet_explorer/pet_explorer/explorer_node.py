@@ -5,14 +5,21 @@ e.g. turtlebot4_navigation's slam.launch.py and nav2.launch.py.
 
 When a goal fails without the robot having moved, it tries short "probe" goals nearby, most open
 space first, until one gets the robot moving, then goes back to frontiers.
+
+When the robot is picked up (the base's kidnap_status), it stops, pauses SLAM and saves the map
+(SLAM's state and the grid) to map_dir. When it's set down, it resets SLAM to an empty map, turns
+a full circle and explores the fresh map: SLAM tracks the robot mostly by wheel motion, so after
+being carried somewhere its old map no longer matches where it is.
 """
+from datetime import datetime
 import math
+import os
 
 from action_msgs.msg import GoalStatus
-from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
+from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector, KidnapStatus
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateToPose, Spin
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
 import rclpy
@@ -21,12 +28,15 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
+from rcl_interfaces.srv import GetParameters
 from rclpy.time import Time
+from slam_toolbox.srv import Pause, Reset, SerializePoseGraph
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from pet_explorer.frontiers import (
     cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, goal_cell, world_to_cell,
 )
+from pet_explorer.maps import save_grid
 from pet_explorer.probes import probe_goals
 
 FRONTIER, PROBE = 'frontier', 'probe'
@@ -60,6 +70,11 @@ class Explorer(Node):
         self.probe_angles = self.declare_parameter('probe_angles', 12).value
         self.probe_clearance = self.declare_parameter('probe_clearance', 0.2).value
         self.probe_timeout = self.declare_parameter('probe_timeout', 6.0).value
+        # Pickup handling: where maps are saved, how long to wait after being set down before
+        # starting a fresh map (seconds), and whether to turn a full circle first.
+        self.map_dir = os.path.expanduser(self.declare_parameter('map_dir', '~/maps').value)
+        self.settle_time = self.declare_parameter('settle_time', 3.0).value
+        self.spin_on_landing = self.declare_parameter('spin_on_landing', True).value
         tick_period = self.declare_parameter('tick_period', 0.5).value  # seconds
 
         self.map = None  # (grid, origin_xy, resolution)
@@ -79,16 +94,29 @@ class Explorer(Node):
         self.finished = False
         self.nav_active = False
         self.nav_state_future = None
+        self.robot_last = None  # the last known robot position, saved with the map on pickup
+        self.lifted = False
+        self.landing = None  # after being set down: 'settling', 'resetting', 'mapping', 'spinning'
+        self.landed_at = None
+        self.spin_handle = None
+        self.pickups = 0
+        self.session_dir = os.path.join(self.map_dir, 'explorer-' + datetime.now().strftime('%Y%m%d-%H%M%S'))
 
         # slam_toolbox publishes the map latched and reliable.
         map_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, 'map', self.on_map, map_qos)
         self.create_subscription(HazardDetectionVector, 'hazard_detection', self.on_hazards, qos_profile_sensor_data)
+        self.create_subscription(KidnapStatus, 'kidnap_status', self.on_kidnap, qos_profile_sensor_data)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         # Nav2's action server appears before Nav2 is active, and rejects goals until then.
         self.nav_state = self.create_client(GetState, 'bt_navigator/get_state')
+        self.spin = ActionClient(self, Spin, 'spin')
+        self.slam_params = self.create_client(GetParameters, 'slam_toolbox/get_parameters')
+        self.slam_pause = self.create_client(Pause, 'slam_toolbox/pause_new_measurements')
+        self.slam_reset = self.create_client(Reset, 'slam_toolbox/reset')
+        self.slam_serialize = self.create_client(SerializePoseGraph, 'slam_toolbox/serialize_map')
         self.create_timer(tick_period, self.tick)
 
     def on_map(self, msg: OccupancyGrid):
@@ -102,6 +130,132 @@ class Explorer(Node):
             self.bumps += 1
             self.get_logger().warn(f'Bumped into something ({self.bumps}/{self.max_bumps})')
         self.bumping = bumping
+
+    def on_kidnap(self, msg: KidnapStatus):
+        if msg.is_kidnapped and not self.lifted:
+            self.lifted = True
+            self.on_lifted()
+        elif not msg.is_kidnapped and self.lifted:
+            self.lifted = False
+            self.landed_at = self.get_clock().now()
+            self.landing = 'settling'
+            self.get_logger().warn(f'Set down; starting a fresh map in {self.settle_time:.0f} s')
+
+    def on_lifted(self):
+        """Stop, pause SLAM so the view from mid-air doesn't go into the map, and save the map."""
+        self.pickups += 1
+        self.get_logger().warn(f'Picked up (#{self.pickups}): stopping, pausing SLAM and saving the map')
+        if self.goal_handle is not None:
+            self.goal_handle.cancel_goal_async()
+        if self.spin_handle is not None:
+            self.spin_handle.cancel_goal_async()
+            self.spin_handle = None
+        self.clear_goal()
+        self.stuck_at = None
+        self.probes_tried = []
+        self.landing = None
+        base = self.session_path(f'pickup-{self.pickups}-before')
+        self.save_map_grid(base + '.npz')
+        self.set_slam_paused(True)
+        if self.slam_serialize.service_is_ready():
+            self.slam_serialize.call_async(SerializePoseGraph.Request(filename=base)).add_done_callback(
+                lambda f: self.log_result(f, f'Saved SLAM state to {base}.posegraph', 'SLAM serialize_map failed'))
+        else:
+            self.get_logger().error('slam_toolbox/serialize_map not available; SLAM state not saved')
+
+    def set_slam_paused(self, paused):
+        """Pause or resume SLAM taking in scans. Its pause service toggles, so this checks the current
+        state first. (Its reset service doesn't resume a paused SLAM, whatever it's asked.)"""
+        word = 'paused' if paused else 'resumed'
+        if not self.slam_params.service_is_ready():
+            self.get_logger().error(f'slam_toolbox not available; SLAM not {word}')
+            return
+
+        def on_params(future):
+            values = future.result().values if future.result() else []
+            if not values or values[0].type != 1:  # 1: bool
+                self.get_logger().error("Can't read SLAM's paused_new_measurements; not toggling it")
+            elif values[0].bool_value == paused:
+                self.get_logger().info(f'SLAM already {word}')
+            else:
+                self.slam_pause.call_async(Pause.Request()).add_done_callback(
+                    lambda f: self.log_result(f, f'SLAM {word}', f'SLAM toggle to {word} failed', ok=lambda r: r.status))
+
+        request = GetParameters.Request(names=['paused_new_measurements'])
+        self.slam_params.call_async(request).add_done_callback(on_params)
+
+    def continue_landing(self):
+        """After being set down: settle, reset SLAM, wait for the fresh map, turn a full circle."""
+        if self.landing == 'settling':
+            if (self.get_clock().now() - self.landed_at).nanoseconds / 1e9 < self.settle_time:
+                return
+            if not self.slam_reset.service_is_ready():
+                self.get_logger().error('slam_toolbox/reset not available; carrying on with the old map')
+                self.landing = None
+                return
+            self.landing = 'resetting'
+            self.slam_reset.call_async(Reset.Request(pause_new_measurements=False)).add_done_callback(self.on_reset)
+        elif self.landing == 'mapping' and self.map is not None and self.robot_xy() is not None:
+            if not self.spin_on_landing or not self.spin.server_is_ready():
+                self.landing = None
+                self.get_logger().info('Exploring the fresh map')
+                return
+            self.landing = 'spinning'
+            self.get_logger().info('Turning a full circle to start the fresh map')
+            goal = Spin.Goal(target_yaw=2 * math.pi)
+            goal.time_allowance.sec = 30
+            self.spin.send_goal_async(goal).add_done_callback(self.on_spin_accepted)
+
+    def on_reset(self, future):
+        result = future.result()
+        if result is None or result.result != Reset.Response.RESULT_SUCCESS:
+            self.get_logger().error('SLAM reset failed; carrying on with the old map')
+            self.landing = None
+            return
+        # The old map, and positions on it, mean nothing now.
+        self.map = None
+        self.blacklist = []
+        self.landing = 'mapping'
+        self.get_logger().info('SLAM reset: starting a fresh map')
+        self.set_slam_paused(False)
+
+    def on_spin_accepted(self, future):
+        handle = future.result()
+        if not handle.accepted:
+            self.get_logger().warn('Spin rejected; exploring the fresh map')
+            self.landing = None
+            return
+        self.spin_handle = handle
+        handle.get_result_async().add_done_callback(lambda f: self.on_spin_done(handle, f))
+
+    def on_spin_done(self, handle, future):
+        if handle is not self.spin_handle:
+            return  # cancelled by another pickup
+        self.spin_handle = None
+        self.landing = None
+        status = future.result().status
+        message = 'Turned a full circle' if status == GoalStatus.STATUS_SUCCEEDED else f'Spin ended early (status {status})'
+        self.get_logger().info(f'{message}; exploring the fresh map')
+
+    def session_path(self, name):
+        os.makedirs(self.session_dir, exist_ok=True)
+        return os.path.join(self.session_dir, name)
+
+    def save_map_grid(self, path):
+        if self.map is None:
+            self.get_logger().warn('No map to save yet')
+            return
+        grid, origin, resolution = self.map
+        robot = self.robot_last if self.robot_last is not None else (math.nan, math.nan)
+        save_grid(path, grid, origin, resolution, robot_xy=robot)
+        self.get_logger().info(f'Saved map grid to {path}')
+
+    def log_result(self, future, success, failure, ok=lambda r: r.result == 0):
+        result = future.result()
+        if result is not None and ok(result):
+            self.get_logger().info(success)
+        else:
+            self.get_logger().error(failure)
 
     def on_feedback(self, msg):
         # Nav2 only starts recovery behaviours (clearing costmaps, spinning, backing up) once it
@@ -119,12 +273,19 @@ class Explorer(Node):
         return (t.transform.translation.x, t.transform.translation.y)
 
     def tick(self):
+        if self.lifted:
+            self.get_logger().info('Picked up; waiting to be set down', throttle_duration_sec=5.0)
+            return
+        if self.landing is not None:
+            self.continue_landing()
+            return
         if self.map is None:
             self.get_logger().info('Waiting for the map', throttle_duration_sec=5.0)
             return
         robot = self.robot_xy()
         if robot is None:
             return
+        self.robot_last = robot
         if self.goal_xy is not None:
             self.check_goal(robot)
             return
@@ -284,10 +445,13 @@ class Explorer(Node):
         self.goal_sent_at = None
 
     def stop(self):
-        """Cancel the current goal so the robot doesn't keep driving after the explorer exits."""
-        if self.goal_handle is not None:
-            self.get_logger().info('Cancelling the current goal')
-            rclpy.spin_until_future_complete(self, self.goal_handle.cancel_goal_async(), timeout_sec=2.0)
+        """Cancel the current goal so the robot doesn't keep driving after the explorer exits, and
+        save the map grid."""
+        for handle in (self.goal_handle, self.spin_handle):
+            if handle is not None:
+                self.get_logger().info('Cancelling the current goal')
+                rclpy.spin_until_future_complete(self, handle.cancel_goal_async(), timeout_sec=2.0)
+        self.save_map_grid(self.session_path('final.npz'))
 
 
 def main():

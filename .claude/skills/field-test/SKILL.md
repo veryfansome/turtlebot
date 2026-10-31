@@ -40,6 +40,10 @@ ops/field-test.sh estop off     # restore motor power (only when the user says i
 - If the user rejects a `stop` or `estop` you sent, it may already have run: check `ops/field-test.sh status` right away and tell them what state the run is in.
 - A normal stop logs launch's Ctrl-C handling and the explorer's `Cancelling the current goal`. If the log ends without them, or `stop` printed "no clean exit after Ctrl-C", the clean shutdown didn't happen: say so.
 
+## Pickup tests
+
+To test pickup handling, the user lifts the robot mid-run and sets it down elsewhere. Watch `status` for `Picked up`, `SLAM paused`, `Saved SLAM state`, `Set down`, `SLAM reset`, `SLAM resumed`, `Turned a full circle`. Ask the user where they put it down relative to where they picked it up (e.g. "2 m toward the kitchen, turned to face the window"): that's the right answer the map matcher will be tested against, so note it next to the saved maps (`~/maps/explorer-<time>/` on the VM).
+
 ## After
 
 Summarize the run from `ops/field-test.sh logs` and `status`: duration, frontiers reached, failures and their causes, anything new. Then `ops/health.sh` again. The camera in particular often needs a `turtlebot4` restart after docking and undocking.

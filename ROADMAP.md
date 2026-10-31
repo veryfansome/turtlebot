@@ -21,8 +21,8 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 - [ ] Navigate on a saved map, using `turtlebot4_navigation`'s `localization.launch.py` and `nav2.launch.py`.
 - [ ] Keep the map up to date as furniture moves, e.g. by reloading a saved slam_toolbox map and continuing to map onto it.
 - [ ] **Recover from being picked up.** SLAM tracks the robot mostly by wheel motion, so carrying it somewhere else corrupts the map. The plan:
-  - On pickup (`kidnap_status`, now relayed from the base), stop: cancel the goal, pause SLAM (`pause_new_measurements`) and save its state (`serialize_map`).
-  - When set down, reset SLAM (`reset`), turn a full circle, and start a fresh map.
+  - [x] On pickup (`kidnap_status`, now relayed from the base), stop: cancel the goal, pause SLAM (`pause_new_measurements`) and save its state (`serialize_map`) and the grid. Built; not yet run on the robot.
+  - [x] When set down, reset SLAM (`reset`; it doesn't resume a paused SLAM by itself, so the explorer resumes it), turn a full circle, and start a fresh map. Built; not yet run on the robot.
   - Repeatedly match the fresh map against the saved one (every rotation and offset, with FFT cross-correlation), keeping every placement that fits well as a hypothesis and re-scoring only those as the fresh map grows.
   - Accept a match only when one hypothesis clearly wins (e.g. above 95%) and fits well in absolute terms; then reload the saved map at that pose (`deserialize_map`). If nothing fits, the robot is somewhere new: keep the fresh map. A false match corrupts the saved map, so when in doubt, don't match.
   - While several hypotheses remain, drive to where they predict the most different views (active localization), so one look settles it.
