@@ -37,7 +37,7 @@ ops/run.sh <pi|vm> <unit> apply    # make the change, restart what's needed, ver
 ops/run.sh <pi|vm> <unit> revert   # undo it, restart, verify
 ```
 
-- `status` and `diff` are read-only. `apply` and `revert` need sudo on the target: in a terminal you're asked for the password; without one they stop and print the command to run yourself.
+- `status` and `diff` are read-only. `apply` and `revert` need sudo on the target, unless there's nothing to do: in a terminal you're asked for the password; without one they stop and print the command to run yourself.
 - `apply` and `revert` are safe to repeat: each is a no-op when already done.
 - Before changing a file, a unit backs it up on the target under `/var/lib/turtlebot-ops/backups/<unit>/`: `<file>.orig` the first time (never overwritten), plus a timestamped copy every time. Every change is logged in `/var/lib/turtlebot-ops/changes.log`.
 - After a change the unit verifies the machine (e.g. the relayed topics come back). If that fails, it puts the previous file back and restarts again.

@@ -29,6 +29,12 @@ cmd="bash $remote/$target/$unit.sh $action"
 case $action in
   status|diff) exec ssh -o BatchMode=yes "$host" "$cmd" ;;
 esac
+# Skip sudo when there's nothing to do.
+status=$(ssh -o BatchMode=yes "$host" "bash $remote/$target/$unit.sh status")
+if [[ ($action == apply && $status == *": applied") || ($action == revert && $status == *": not applied") ]]; then
+  echo "$status; nothing to $action"
+  exit 0
+fi
 if [[ -t 0 ]]; then
   exec ssh -t "$host" "sudo $cmd"
 elif ssh -o BatchMode=yes "$host" sudo -n true 2>/dev/null; then
