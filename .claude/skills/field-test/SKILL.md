@@ -28,7 +28,8 @@ ops/field-test.sh logs [lines]          # the end of the full log (SLAM, Nav2, e
 ## Stopping
 
 ```bash
-ops/field-test.sh stop          # normal stop: the explorer cancels its goal, then everything exits
+ops/field-test.sh save-map      # save the SLAM map to ~/maps/<run>/ (stop does this too)
+ops/field-test.sh stop          # normal stop: saves the map, the explorer cancels its goal, then everything exits
 ops/field-test.sh estop on      # emergency: cuts the drive motors' power at the base
 ops/field-test.sh estop off     # restore motor power (only when the user says it's safe)
 ```
@@ -36,6 +37,8 @@ ops/field-test.sh estop off     # restore motor power (only when the user says i
 - Stop without asking when the user says stop, when something looks unsafe (repeated bumps, kidnapped, battery under 20%), when the explorer reports `exploration complete`, or when you're about to end your turn without the user watching.
 - Use `estop on` when a normal stop isn't enough or the robot is doing something dangerous; then `stop` as well. Never turn the e-stop off without the user's say-so.
 - Don't leave a run going silently: if it's still running when you reply, say so.
+- If the user rejects a `stop` or `estop` you sent, it may already have run: check `ops/field-test.sh status` right away and tell them what state the run is in.
+- A normal stop logs launch's Ctrl-C handling and the explorer's `Cancelling the current goal`. If the log ends without them, or `stop` printed "no clean exit after Ctrl-C", the clean shutdown didn't happen: say so.
 
 ## After
 

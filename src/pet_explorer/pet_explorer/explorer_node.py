@@ -10,6 +10,8 @@ import math
 
 from action_msgs.msg import GoalStatus
 from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
@@ -47,8 +49,9 @@ class Explorer(Node):
         # Give up after this many bumps on the way to one goal. Low obstacles sit under the lidar's
         # scan plane, so Nav2 can't see them and keeps driving into them.
         self.max_bumps = self.declare_parameter('max_bumps', 2).value
-        # A goal that failed is avoided, along with anything this close to it (metres), for this long
-        # (seconds). Other parts of the same frontier stay available.
+        # A goal that failed or was reached is avoided, along with anything this close to it (metres),
+        # for this long (seconds). Other parts of the same frontier stay available. Reached ones too,
+        # because a frontier whose far side can't be seen from there stays a frontier.
         self.blacklist_radius = self.declare_parameter('blacklist_radius', 0.5).value
         self.blacklist_duration = self.declare_parameter('blacklist_duration', 300.0).value
         # Probe goals: points this far from the robot (metres), at this many angles, at least
@@ -74,6 +77,8 @@ class Explorer(Node):
         self.stuck_at = None  # set while probing: where the robot got stuck
         self.probes_tried = []
         self.finished = False
+        self.nav_active = False
+        self.nav_state_future = None
 
         # slam_toolbox publishes the map latched and reliable.
         map_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -82,6 +87,8 @@ class Explorer(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        # Nav2's action server appears before Nav2 is active, and rejects goals until then.
+        self.nav_state = self.create_client(GetState, 'bt_navigator/get_state')
         self.create_timer(tick_period, self.tick)
 
     def on_map(self, msg: OccupancyGrid):
@@ -121,12 +128,32 @@ class Explorer(Node):
         if self.goal_xy is not None:
             self.check_goal(robot)
             return
-        if not self.nav.server_is_ready():
-            self.get_logger().info('Waiting for Nav2 (navigate_to_pose)', throttle_duration_sec=5.0)
+        if not self.nav2_active():
+            self.get_logger().info('Waiting for Nav2 to become active', throttle_duration_sec=5.0)
             return
         if self.stuck_at is not None and self.try_probe(robot):
             return
         self.go_to_frontier(robot)
+
+    def nav2_active(self):
+        """Whether Nav2's bt_navigator is active, checked without blocking until it first is."""
+        if self.nav_active:
+            return self.nav.server_is_ready()
+        if self.nav_state_future is not None and self.nav_state_future.done():
+            result = self.nav_state_future.result()
+            self.nav_active = result is not None and result.current_state.id == State.PRIMARY_STATE_ACTIVE
+            self.nav_state_future = None
+            if self.nav_active:
+                self.get_logger().info('Nav2 is active')
+                return self.nav.server_is_ready()
+        if self.nav_state_future is None and self.nav_state.service_is_ready():
+            self.nav_state_future = self.nav_state.call_async(GetState.Request())
+        return False
+
+    def avoid(self, xy):
+        until = self.get_clock().now() + Duration(seconds=self.blacklist_duration)
+        self.blacklist.append((xy, until))
+        self.get_logger().info(f'Avoiding ({xy[0]:.2f}, {xy[1]:.2f}) for {self.blacklist_duration:.0f} s')
 
     def try_probe(self, robot):
         """While stuck, send the next probe goal. Returns False once unstuck or out of probes."""
@@ -217,7 +244,8 @@ class Explorer(Node):
     def on_goal_response(self, future):
         handle = future.result()
         if not handle.accepted:
-            self.fail_goal(self.goal_start_xy, 'Nav2 rejected it', cancel=False)
+            # Not a sign of being stuck: Nav2 never tried.
+            self.fail_goal(self.goal_start_xy, 'Nav2 rejected it', cancel=False, maybe_stuck=False)
             return
         self.goal_handle = handle
         handle.get_result_async().add_done_callback(lambda f: self.on_result(handle, f))
@@ -228,20 +256,20 @@ class Explorer(Node):
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info(f'Reached {self.goal_kind}')
+            if self.goal_kind == FRONTIER:
+                self.avoid(self.goal_xy)
             self.clear_goal()
         else:
             robot = self.robot_xy() or self.goal_start_xy
             self.fail_goal(robot, f'Nav2 failed (status {status})', cancel=False)
 
-    def fail_goal(self, robot, reason, cancel=True):
+    def fail_goal(self, robot, reason, cancel=True, maybe_stuck=True):
         """Give up on the current goal. A failed frontier is avoided for a while, and if the robot
         never got going, probing starts."""
         self.get_logger().info(f'Abandoning {self.goal_kind}: {reason}')
         if self.goal_kind == FRONTIER:
-            until = self.get_clock().now() + Duration(seconds=self.blacklist_duration)
-            self.blacklist.append((self.goal_xy, until))
-            self.get_logger().info(f'Avoiding ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}) for {self.blacklist_duration:.0f} s')
-            if math.dist(robot, self.goal_start_xy) <= self.progress_distance:
+            self.avoid(self.goal_xy)
+            if maybe_stuck and math.dist(robot, self.goal_start_xy) <= self.progress_distance:
                 self.get_logger().info('Stuck; trying nearby spots')
                 self.stuck_at = robot
                 self.probes_tried = []
