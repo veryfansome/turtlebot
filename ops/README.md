@@ -19,7 +19,8 @@ ops/vm-sync.sh [branch]        # pull, rebuild and test ~/turtlebot in the VM (p
 ops/field-test.sh start        # preflight checks, then run SLAM + Nav2 + explorer in the background: drives the robot
 ops/field-test.sh status       # running or not, and the latest explorer lines
 ops/field-test.sh logs [lines] # the end of the run's log (kept in ~/field-tests/ on the VM)
-ops/field-test.sh stop         # stop the run; the explorer cancels its goal first
+ops/field-test.sh save-map     # save the SLAM map to ~/maps/<run>/ on the VM
+ops/field-test.sh stop         # save the map, then stop the run; the explorer cancels its goal first
 ops/field-test.sh estop on|off # the base's e-stop: cut or restore drive motor power
 ```
 

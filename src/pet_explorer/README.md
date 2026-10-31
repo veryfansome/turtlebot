@@ -12,7 +12,8 @@ Written from scratch rather than depending on [m-explore-ros2](https://github.co
 4. The cheapest one goes to Nav2's `navigate_to_pose`.
 5. A goal is dropped if the frontier gets mapped before the robot arrives (it moves on, no penalty). It's given up, and the area within `blacklist_radius` of that spot avoided for `blacklist_duration`, if Nav2 fails or rejects it, Nav2 starts its recovery behaviours (clearing costmaps, spinning, backing up: on this robot a sign it's stuck), it takes longer than `goal_timeout`, the robot moves less than `progress_distance` in `progress_timeout`, or it bumps into something `max_bumps` times on the way (from the base's `/hazard_detection`; low obstacles sit under the lidar's scan plane, so Nav2 can't see them).
    If the robot never got going (it's still within `progress_distance` of where the goal started), it tries short probe goals nearby in quick succession: points `probe_radii` away at `probe_angles` angles, on known free space at least `probe_clearance` from obstacles, most open first, each given `probe_timeout`. As soon as the robot has moved `progress_distance` it goes back to frontiers; if every probe fails it goes back to frontiers anyway.
-6. With no frontiers left it logs `exploration complete` and waits, picking up again if the map grows.
+6. A reached frontier is avoided for `blacklist_duration` too: when its far side can't be seen from there, it stays a frontier, and the explorer would otherwise pick it again and again.
+7. With no frontiers left it logs `exploration complete` and waits, picking up again if the map grows.
 
 Ctrl-C cancels the current Nav2 goal before exiting, so the robot stops.
 
@@ -63,8 +64,8 @@ Set with `--ros-args -p name:=value`.
 | `progress_distance` | `0.25` | Movement that counts as progress (m) |
 | `progress_timeout` | `8.0` | Give up on a goal after this long without progress (s) |
 | `max_bumps` | `2` | Give up on a goal after this many bumps |
-| `blacklist_radius` | `0.5` | Avoid goals this close to a failed one; the rest of that frontier stays available. Also how near a frontier must stay to keep the current goal (m) |
-| `blacklist_duration` | `300.0` | How long a failed spot is avoided (s) |
+| `blacklist_radius` | `0.5` | Avoid goals this close to a failed or reached one; the rest of that frontier stays available. Also how near a frontier must stay to keep the current goal (m) |
+| `blacklist_duration` | `300.0` | How long a failed or reached spot is avoided (s) |
 | `probe_radii` | `[0.4, 0.7]` | Distances of probe goals from the robot (m) |
 | `probe_angles` | `12` | Probe goals per distance, evenly spaced around the robot |
 | `probe_clearance` | `0.2` | Minimum distance from probe goals to obstacles on the map (m) |
