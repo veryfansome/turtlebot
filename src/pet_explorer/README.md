@@ -39,10 +39,12 @@ In separate VM terminals:
 
 ```bash
 ros2 launch turtlebot4_navigation slam.launch.py
-ros2 launch turtlebot4_navigation nav2.launch.py
+ros2 launch turtlebot4_navigation nav2.launch.py params_file:=$HOME/turtlebot/config/nav2.yaml
 ros2 launch turtlebot4_viz view_navigation.launch.py   # optional: watch the map and goals in RViz
 ros2 run pet_explorer explorer
 ```
+
+Nav2 runs with this repo's [config/nav2.yaml](../../config/nav2.yaml), TurtleBot 4's settings with narrower safety margins so it fits through tighter gaps.
 
 To stop: Ctrl-C the explorer. Save the map before closing SLAM, as in the [Generating a map](https://turtlebot.github.io/turtlebot4-user-manual/tutorials/generate_map.html) tutorial.
 
