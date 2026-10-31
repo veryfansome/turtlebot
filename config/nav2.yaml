@@ -141,7 +141,9 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.06
+      # pet: was 0.06. Obstacles fill whole cells and the "would touch" zone rounds out to whole
+      # cells, so coarse cells close off passages the robot fits through.
+      resolution: 0.03
       footprint: "[[ 0.189,  0.000],
                   [ 0.134, -0.134],
                   [ 0.000, -0.189],
@@ -199,7 +201,9 @@ global_costmap:
                   [-0.134,  0.134],
                   [ 0.000,  0.189],
                   [ 0.134,  0.134]]"
-      resolution: 0.06
+      # pet: was 0.06. Obstacles fill whole cells and the "would touch" zone rounds out to whole
+      # cells, so coarse cells close off passages the robot fits through.
+      resolution: 0.03
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
