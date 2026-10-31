@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Runs once inside the guest on first boot (started by cloud-init from create-vm.sh).
 # Installs a desktop, UTM guest tools, ROS 2 Jazzy and the TurtleBot 4 desktop packages.
-# Safe to re-run by hand if it fails: sudo bash /usr/local/sbin/provision.sh <user>
+# Then clones this repo into ~/turtlebot and builds its ROS 2 packages, so the VM comes up ready.
+# Safe to re-run by hand if it fails: sudo bash /usr/local/sbin/provision.sh <user> [repo_url] [branch]
 set -euxo pipefail
 
 user=$1
+repo_url=${2:-https://github.com/veryfansome/turtlebot.git}
+repo_branch=${3:-main}
 export DEBIAN_FRONTEND=noninteractive
 echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
 
@@ -33,8 +36,16 @@ apt-get upgrade -y
 # turtlebot4-navigation: SLAM mapping and Nav2 launch files (turtlebot4_navigation slam.launch.py, nav2.launch.py)
 apt-get install -y ros-jazzy-desktop ros-jazzy-turtlebot4-desktop ros-jazzy-irobot-create-msgs ros-jazzy-turtlebot4-navigation ros-dev-tools
 
+# The repo root is a colcon workspace (packages under src/). Cloned over HTTPS, which needs no
+# credentials while the repo is public; switch the remote to SSH to push from the VM.
+repo_dir=/home/$user/turtlebot
+[[ -d $repo_dir ]] || sudo -u "$user" git clone --branch "$repo_branch" "$repo_url" "$repo_dir"
+sudo -u "$user" bash -c "source /opt/ros/jazzy/setup.bash && cd '$repo_dir' && colcon build --symlink-install"
+
 bashrc=/home/$user/.bashrc
 grep -qF /opt/ros/jazzy/setup.bash "$bashrc" || echo 'source /opt/ros/jazzy/setup.bash' >> "$bashrc"
+grep -qF "$repo_dir/install/setup.bash" "$bashrc" \
+  || echo "[ -f $repo_dir/install/setup.bash ] && source $repo_dir/install/setup.bash" >> "$bashrc"
 # Must match the robot's /etc/turtlebot4/setup.bash for ROS 2 discovery to find it.
 grep -qF ROS_DOMAIN_ID "$bashrc" || cat >> "$bashrc" <<'EOF'
 export ROS_DOMAIN_ID=0
