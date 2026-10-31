@@ -20,6 +20,7 @@ from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector, Kidna
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose, Spin
+from nav2_msgs.srv import ClearEntireCostmap
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
 import rclpy
@@ -117,6 +118,12 @@ class Explorer(Node):
         self.slam_pause = self.create_client(Pause, 'slam_toolbox/pause_new_measurements')
         self.slam_reset = self.create_client(Reset, 'slam_toolbox/reset')
         self.slam_serialize = self.create_client(SerializePoseGraph, 'slam_toolbox/serialize_map')
+        # Nav2's costmaps keep obstacles until a lidar beam passes through them, so marks from mid-air
+        # or from someone who stood nearby can box the robot in for good.
+        self.costmap_clearers = [
+            self.create_client(ClearEntireCostmap, 'local_costmap/clear_entirely_local_costmap'),
+            self.create_client(ClearEntireCostmap, 'global_costmap/clear_entirely_global_costmap'),
+        ]
         self.create_timer(tick_period, self.tick)
 
     def on_map(self, msg: OccupancyGrid):
@@ -218,6 +225,17 @@ class Explorer(Node):
         self.landing = 'mapping'
         self.get_logger().info('SLAM reset: starting a fresh map')
         self.set_slam_paused(False)
+        self.clear_costmaps('of what the lidar saw in mid-air')
+
+    def clear_costmaps(self, why):
+        """Wipe Nav2's local and global costmaps; they refill from the next lidar scans and the map."""
+        self.get_logger().info(f'Clearing the costmaps {why}')
+        for client in self.costmap_clearers:
+            if client.service_is_ready():
+                client.call_async(ClearEntireCostmap.Request()).add_done_callback(
+                    lambda f, name=client.srv_name: self.log_result(f, f'Cleared {name}', f'{name} failed', ok=lambda r: True))
+            else:
+                self.get_logger().error(f'{client.srv_name} not available; costmap not cleared')
 
     def on_spin_accepted(self, future):
         handle = future.result()
@@ -434,6 +452,7 @@ class Explorer(Node):
                 self.get_logger().info('Stuck; trying nearby spots')
                 self.stuck_at = robot
                 self.probes_tried = []
+                self.clear_costmaps('in case old obstacles are boxing it in')
         if cancel and self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
         self.clear_goal()
