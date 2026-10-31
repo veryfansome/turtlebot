@@ -59,6 +59,25 @@ def find_frontiers(grid: np.ndarray, min_size: int = 1, occupied_threshold: int 
     return frontiers
 
 
+def goal_cell(frontier: Frontier, avoid_xy, radius: float, origin_xy, resolution: float):
+    """The frontier cell nearest its centroid that is at least radius (metres) from every point in avoid_xy.
+
+    Returns None if every cell is too close, so a failed spot rules out only its own surroundings,
+    not the rest of a long frontier.
+    """
+    cells = frontier.cells
+    order = ((cells - cells.mean(axis=0)) ** 2).sum(axis=1)
+    if len(avoid_xy):
+        xy = np.column_stack((origin_xy[0] + (cells[:, 1] + 0.5) * resolution,
+                              origin_xy[1] + (cells[:, 0] + 0.5) * resolution))
+        gaps = np.linalg.norm(xy[:, None, :] - np.asarray(avoid_xy)[None, :, :], axis=2).min(axis=1)
+        order = np.where(gaps >= radius, order, np.inf)
+    best = np.argmin(order)
+    if np.isinf(order[best]):
+        return None
+    return (int(cells[best, 0]), int(cells[best, 1]))
+
+
 def frontier_near(mask: np.ndarray, cell: tuple[int, int], radius: int) -> bool:
     """True if any frontier cell lies within radius cells (square window) of cell."""
     r, c = cell

@@ -6,18 +6,22 @@ e.g. turtlebot4_navigation's slam.launch.py and nav2.launch.py.
 import math
 
 from action_msgs.msg import GoalStatus
+from irobot_create_msgs.msg import HazardDetection, HazardDetectionVector
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, qos_profile_sensor_data, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from pet_explorer.frontiers import cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, world_to_cell
+from pet_explorer.frontiers import (
+    cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, goal_cell, world_to_cell,
+)
 
 
 class Explorer(Node):
@@ -30,20 +34,34 @@ class Explorer(Node):
         self.distance_weight = self.declare_parameter('distance_weight', 3.0).value
         self.size_weight = self.declare_parameter('size_weight', 1.0).value
         self.goal_timeout = self.declare_parameter('goal_timeout', 60.0).value  # seconds
-        # Goals that failed are skipped from then on, along with anything this close to them (metres).
+        # Give up if the robot hasn't moved progress_distance (metres) in progress_timeout (seconds),
+        # e.g. stuck or spinning in place.
+        self.progress_distance = self.declare_parameter('progress_distance', 0.25).value
+        self.progress_timeout = self.declare_parameter('progress_timeout', 20.0).value
+        # Give up after this many bumps on the way to one goal. Low obstacles sit under the lidar's
+        # scan plane, so Nav2 can't see them and keeps driving into them.
+        self.max_bumps = self.declare_parameter('max_bumps', 2).value
+        # A goal that failed is avoided, along with anything this close to it (metres), for this long
+        # (seconds). Other parts of the same frontier stay available.
         self.blacklist_radius = self.declare_parameter('blacklist_radius', 0.5).value
+        self.blacklist_duration = self.declare_parameter('blacklist_duration', 300.0).value
         tick_period = self.declare_parameter('tick_period', 1.0).value  # seconds
 
         self.map = None  # (grid, origin_xy, resolution)
-        self.blacklist = []
+        self.blacklist = []  # (xy, time it expires)
         self.goal_xy = None  # set from sending a goal until it finishes or is cancelled
         self.goal_handle = None  # set once Nav2 accepts the goal
         self.goal_sent_at = None
+        self.progress_xy = None  # where the robot was when it last made progress, and when
+        self.progress_at = None
+        self.bumps = 0
+        self.bumping = False
         self.finished = False
 
         # slam_toolbox publishes the map latched and reliable.
         map_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, 'map', self.on_map, map_qos)
+        self.create_subscription(HazardDetectionVector, 'hazard_detection', self.on_hazards, qos_profile_sensor_data)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -53,6 +71,13 @@ class Explorer(Node):
         grid = np.array(msg.data, dtype=np.int8).reshape(msg.info.height, msg.info.width)
         origin = (msg.info.origin.position.x, msg.info.origin.position.y)
         self.map = (grid, origin, msg.info.resolution)
+
+    def on_hazards(self, msg: HazardDetectionVector):
+        bumping = any(d.type == HazardDetection.BUMP for d in msg.detections)
+        if bumping and not self.bumping and self.goal_handle is not None:
+            self.bumps += 1
+            self.get_logger().warn(f'Bumped into something ({self.bumps}/{self.max_bumps})')
+        self.bumping = bumping
 
     def robot_xy(self):
         try:
@@ -70,19 +95,23 @@ class Explorer(Node):
         if robot is None:
             return
         if self.goal_xy is not None:
-            self.check_goal()
+            self.check_goal(robot)
             return
         if not self.nav.server_is_ready():
             self.get_logger().info('Waiting for Nav2 (navigate_to_pose)', throttle_duration_sec=5.0)
             return
 
+        now = self.get_clock().now()
+        self.blacklist = [(xy, until) for xy, until in self.blacklist if until > now]
+        avoid = [xy for xy, _ in self.blacklist]
         grid, origin, resolution = self.map
         min_cells = max(1, round(self.min_frontier_size / resolution))
         candidates = []
         for frontier in find_frontiers(grid, min_cells):
-            xy = cell_to_world(frontier.goal, origin, resolution)
-            if any(math.dist(xy, b) < self.blacklist_radius for b in self.blacklist):
+            cell = goal_cell(frontier, avoid, self.blacklist_radius, origin, resolution)
+            if cell is None:
                 continue
+            xy = cell_to_world(cell, origin, resolution)
             size_m = frontier.size * resolution
             candidates.append((cost(xy, size_m, robot, self.distance_weight, self.size_weight), xy, size_m))
         if not candidates:
@@ -94,12 +123,21 @@ class Explorer(Node):
         _, xy, size_m = min(candidates)
         self.send_goal(xy, robot, size_m)
 
-    def check_goal(self):
-        """Give up on the current goal if it's taking too long or its frontier has been mapped."""
+    def check_goal(self, robot):
+        """Give up on the current goal if it's stuck, taking too long, or its frontier has been mapped."""
         if self.goal_handle is None:
             return  # Nav2 hasn't accepted it yet
-        if (self.get_clock().now() - self.goal_sent_at).nanoseconds / 1e9 > self.goal_timeout:
+        now = self.get_clock().now()
+        if (now - self.goal_sent_at).nanoseconds / 1e9 > self.goal_timeout:
             self.cancel_goal('timed out', blacklist=True)
+            return
+        if self.bumps >= self.max_bumps:
+            self.cancel_goal(f'bumped into something {self.bumps} times', blacklist=True)
+            return
+        if math.dist(robot, self.progress_xy) > self.progress_distance:
+            self.progress_xy, self.progress_at = robot, now
+        elif (now - self.progress_at).nanoseconds / 1e9 > self.progress_timeout:
+            self.cancel_goal(f'no progress in {self.progress_timeout:.0f} s', blacklist=True)
             return
         grid, origin, resolution = self.map
         cell = world_to_cell(self.goal_xy, origin, resolution)
@@ -118,14 +156,16 @@ class Explorer(Node):
         goal.pose.pose.orientation.w = math.cos(yaw / 2)
         self.get_logger().info(f'Heading to frontier at ({xy[0]:.2f}, {xy[1]:.2f}), {size_m:.2f} m long')
         self.goal_xy = xy
-        self.goal_sent_at = self.get_clock().now()
+        self.goal_sent_at = self.progress_at = self.get_clock().now()
+        self.progress_xy = robot
+        self.bumps = 0
         self.nav.send_goal_async(goal).add_done_callback(self.on_goal_response)
 
     def on_goal_response(self, future):
         handle = future.result()
         if not handle.accepted:
             self.get_logger().warn('Nav2 rejected the goal')
-            self.blacklist.append(self.goal_xy)
+            self.avoid_goal()
             self.clear_goal()
             return
         self.goal_handle = handle
@@ -138,16 +178,21 @@ class Explorer(Node):
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.get_logger().info('Reached frontier')
         else:
-            self.get_logger().warn(f'Nav2 failed to reach the frontier (status {status}); skipping it')
-            self.blacklist.append(self.goal_xy)
+            self.get_logger().warn(f'Nav2 failed to reach the frontier (status {status})')
+            self.avoid_goal()
         self.clear_goal()
 
     def cancel_goal(self, reason, blacklist):
         self.get_logger().info(f'Abandoning frontier: {reason}')
         if blacklist:
-            self.blacklist.append(self.goal_xy)
+            self.avoid_goal()
         self.goal_handle.cancel_goal_async()
         self.clear_goal()
+
+    def avoid_goal(self):
+        until = self.get_clock().now() + Duration(seconds=self.blacklist_duration)
+        self.blacklist.append((self.goal_xy, until))
+        self.get_logger().info(f'Avoiding ({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}) for {self.blacklist_duration:.0f} s')
 
     def clear_goal(self):
         self.goal_xy = None

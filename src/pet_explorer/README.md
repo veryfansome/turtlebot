@@ -10,17 +10,17 @@ Written from scratch rather than depending on [m-explore-ros2](https://github.co
 2. Frontier cells are free cells with an unknown cell directly next to them. Touching ones are grouped into frontiers, and frontiers shorter than `min_frontier_size` are ignored.
 3. Each frontier gets a cost of `distance_weight × distance − size_weight × length`, so near, long frontiers win. This is `cost()` in `pet_explorer/frontiers.py`, the function later stages replace with novelty scores.
 4. The cheapest one goes to Nav2's `navigate_to_pose`.
-5. A goal is dropped if the frontier gets mapped before the robot arrives (it moves on, no penalty), or if Nav2 fails, rejects it, or takes longer than `goal_timeout` (that spot is skipped from then on).
+5. A goal is dropped if the frontier gets mapped before the robot arrives (it moves on, no penalty). It's also dropped, and the area within `blacklist_radius` of that spot avoided for `blacklist_duration`, if Nav2 fails or rejects it, it takes longer than `goal_timeout`, the robot moves less than `progress_distance` in `progress_timeout` (stuck or spinning), or it bumps into something `max_bumps` times on the way (from the base's `/hazard_detection`). Low obstacles sit under the lidar's scan plane, so Nav2 can't see them and would keep driving into them.
 6. With no frontiers left it logs `exploration complete` and waits, picking up again if the map grows.
 
 Ctrl-C cancels the current Nav2 goal before exiting, so the robot stops.
 
 ## Building (in the VM)
 
-The repo root is a colcon workspace, with packages under `src/`. Clone the repo in the VM (or pull if it's already there), then:
+The repo root is a colcon workspace, with packages under `src/`. A VM made with [vm/create-vm.sh](../../vm/README.md) already has it cloned to `~/turtlebot`, built, and sourced in new terminals. After pulling changes:
 
 ```bash
-cd turtlebot
+cd ~/turtlebot
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -35,7 +35,7 @@ colcon test --packages-select pet_explorer && colcon test-result --verbose
 
 Undock the robot first: the power saver keeps the lidar and camera off while it's docked. Clear the floor of cables, and block off stairs (the base has cliff sensors, but don't rely on them on the first runs). Stay nearby.
 
-In separate VM terminals, each with `install/setup.bash` sourced:
+In separate VM terminals:
 
 ```bash
 ros2 launch turtlebot4_navigation slam.launch.py
@@ -58,5 +58,9 @@ Set with `--ros-args -p name:=value`.
 | `distance_weight` | `3.0` | Cost per metre of distance to the frontier |
 | `size_weight` | `1.0` | Cost reduction per metre of frontier length |
 | `goal_timeout` | `60.0` | Give up on a goal after this long (s) |
-| `blacklist_radius` | `0.5` | Skip frontiers this close to a failed goal; also how near a frontier must stay to keep the current goal (m) |
+| `progress_distance` | `0.25` | Movement that counts as progress (m) |
+| `progress_timeout` | `20.0` | Give up on a goal after this long without progress (s) |
+| `max_bumps` | `2` | Give up on a goal after this many bumps |
+| `blacklist_radius` | `0.5` | Avoid goals this close to a failed one; the rest of that frontier stays available. Also how near a frontier must stay to keep the current goal (m) |
+| `blacklist_duration` | `300.0` | How long a failed spot is avoided (s) |
 | `tick_period` | `1.0` | How often to re-check the map and goal (s) |

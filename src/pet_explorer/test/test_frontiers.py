@@ -1,6 +1,8 @@
 import numpy as np
 
-from pet_explorer.frontiers import cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, world_to_cell
+from pet_explorer.frontiers import (
+    cell_to_world, cost, find_frontiers, frontier_mask, frontier_near, goal_cell, world_to_cell,
+)
 
 U, F, O = -1, 0, 100  # unknown, free, occupied
 
@@ -45,6 +47,19 @@ def test_frontier_goal_is_a_frontier_cell():
     (frontier,) = find_frontiers(grid)
     assert frontier.goal == (1, 2)
     assert frontier_mask(grid)[frontier.goal]
+
+
+def test_goal_cell_moves_away_from_avoided_spots():
+    grid = np.full((5, 11), F)
+    grid[0, :] = U  # frontier along row 1, cols 0-10, centred on (1, 5)
+    (frontier,) = find_frontiers(grid)
+    origin, resolution = (0.0, 0.0), 1.0
+    assert goal_cell(frontier, [], 1.5, origin, resolution) == (1, 5)
+    # Avoiding the centre (world (5.5, 1.5)) shifts the goal just outside the radius, not off the frontier.
+    cell = goal_cell(frontier, [(5.5, 1.5)], 1.5, origin, resolution)
+    assert cell in [(1, 3), (1, 7)]
+    # Avoiding every cell leaves no goal.
+    assert goal_cell(frontier, [(5.5, 1.5)], 20.0, origin, resolution) is None
 
 
 def test_frontier_near():
