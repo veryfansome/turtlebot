@@ -23,6 +23,8 @@ TOPICS = [
     '/mouse',  # the base's optical floor sensor: what the robot actually did over the floor
     '/imu',  # jolts from collisions the bumper misses
     '/wheel_status',  # motor currents: they rise when it pushes against something
+    '/wheel_vels',  # actual wheel speeds
+    '/slip_status',  # the base's own wheel-slip detection
     '/hazard_detection',  # bumps (reported only at the moment of contact), cliffs, wheel drops
     '/kidnap_status',
     '/dock_status',

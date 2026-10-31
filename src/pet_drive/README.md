@@ -53,6 +53,7 @@ What's recorded, and why:
 | `/mouse` | The base's optical floor sensor: what the robot actually did over the floor. Wheels turning while this says it isn't moving is pushing or slipping |
 | `/imu` | Jolts from collisions the bumper misses |
 | `/wheel_status` | Motor currents, which rise when it pushes against something |
+| `/wheel_vels`, `/slip_status` | Actual wheel speeds, and the base's own wheel-slip detection |
 | `/hazard_detection` | Bumps (only at the moment of contact), cliffs, wheel drops |
 | `/kidnap_status`, `/dock_status`, `/battery_state` | Picked up, docked, battery |
 | `/tf`, `/tf_static`, `/map` | Where it is: SLAM's `map` → `odom` is movement measured by SLAM, not the wheels |

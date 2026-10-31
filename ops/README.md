@@ -47,7 +47,7 @@ ops/run.sh <pi|vm> <unit> revert   # undo it, restart, verify
 
 | Unit | Changes | Why |
 |---|---|---|
-| `pi/create3-relays` | Uncomments `hazard_detection` and `kidnap_status` in `/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml`; restarts `turtlebot4` | The safety layer and recordings need hazards (cliffs, wheel drops, bumps) and kidnap status. A TurtleBot 4 package update can overwrite the file: check `status` after updates. |
+| `pi/create3-relays` | Uncomments `hazard_detection`, `kidnap_status`, `mouse`, `slip_status` and `wheel_vels` in `/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml`; restarts `turtlebot4` | The safety layer and recordings need hazards (cliffs, wheel drops, bumps) and kidnap status; recordings use the floor sensor (`mouse`), wheel slip and wheel speeds to tell real motion from wheels spinning. A TurtleBot 4 package update can overwrite the file: check `status` after updates. |
 
 ## Not scripted
 

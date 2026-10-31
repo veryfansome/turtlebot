@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Relay two Create 3 base topics through the Pi that TurtleBot 4 ships commented out:
-#   hazard_detection: bumps and other hazards (pet_explorer's bump check)
+# Relay Create 3 base topics through the Pi that TurtleBot 4 ships commented out:
+#   hazard_detection: bumps, cliffs, wheel drops (the safety layer, recordings)
 #   kidnap_status:    the robot was picked up
+#   mouse:            the optical floor sensor: actual motion over the floor (recordings)
+#   slip_status:      the base's own wheel-slip detection (recordings)
+#   wheel_vels:       actual wheel speeds (recordings)
 # Edits the installed republisher config, so a TurtleBot 4 package update can undo it; check
 # `status` after updates.
 source "$(dirname "$0")/../lib.sh"
 
 UNIT=create3-relays
 TARGET_FILE=/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml
-TOPICS=(hazard_detection kidnap_status)
+TOPICS=(hazard_detection kidnap_status mouse slip_status wheel_vels)
 
 # A disabled entry is the enabled one with "# " in place of the first two spaces of its indent.
 unit_apply_transform() {
