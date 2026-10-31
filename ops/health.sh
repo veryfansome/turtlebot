@@ -24,6 +24,15 @@ rate() { timeout 8 ros2 topic hz "$1" 2>/dev/null | grep -m1 -o 'average rate: [
 echo "  up $(uptime -p | sed 's/^up //'), disk $(df -h / | awk 'NR==2 {print $5}') used"
 systemctl is-active --quiet turtlebot4 && ok "turtlebot4 service running" || bad "turtlebot4 service not running"
 
+# Scans are split into several packets; when the Wi-Fi drops split packets, small topics still
+# reach the VM but /scan never does.
+gateway=$(ip route | awk '/default/ {print $3; exit}')
+if ping -c 3 -W 2 -s 3000 "$gateway" >/dev/null 2>&1; then
+  ok "Wi-Fi passes large packets"
+else
+  bad "Wi-Fi drops large packets (scans won't reach the VM); $(journalctl -k --since -1h --no-pager 2>/dev/null | grep -c brcmfmac) brcmfmac errors in the last hour"
+fi
+
 battery=$(first 8 /battery_state percentage)
 if [[ -z $battery ]]; then
   bad "base silent (no /battery_state): restart its application from its web page"
@@ -49,7 +58,7 @@ for topic in hazard_detection kidnap_status; do
 done
 [[ $(first 8 /kidnap_status is_kidnapped) == True ]] && bad "picked up (kidnapped)"
 
-override=$(timeout 15 ros2 service call /_do_not_use/motion_control/get_parameters \
+override=$(timeout 30 ros2 service call /_do_not_use/motion_control/get_parameters \
   rcl_interfaces/srv/GetParameters "{names: [safety_override]}" 2>/dev/null | grep -o "string_value='[^']*'" | cut -d"'" -f2)
 [[ $override == backup_only ]] && ok "safety_override backup_only" || bad "safety_override is '${override:-unknown}', expected backup_only"
 REMOTE

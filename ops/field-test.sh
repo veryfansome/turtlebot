@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run the explorer stack (SLAM, Nav2, explorer) on the VM in the background, from the Mac:
-#   ops/field-test.sh start [launch args...]  preflight checks, then start (DRIVES THE ROBOT)
-#   ops/field-test.sh status                  running or not, and the latest explorer lines
+# Run a stack on the VM in the background, from the Mac:
+#   ops/field-test.sh start record [args...]  SLAM + safety layer + a bag in ~/drives/ (drives nothing itself)
+#   ops/field-test.sh start explore [args...] SLAM + Nav2 + explorer (paused; DRIVES THE ROBOT)
+#   ops/field-test.sh status                  running or not, and the latest lines (or the bag's size)
 #   ops/field-test.sh logs [lines]            the end of the latest run's log (default 40 lines)
 #   ops/field-test.sh save-map                save the SLAM map to ~/maps/<run>/ on the VM
 #   ops/field-test.sh stop                    save the map, Ctrl-C the stack (the explorer cancels its goal), make sure it's gone
@@ -42,6 +43,13 @@ save_map() {
 
 case $action in
   start)
+    mode=${1:-}
+    case $mode in
+      record) launch=(pet_drive record.launch.py) ;;
+      explore) launch=(pet_explorer explore.launch.py) ;;
+      *) echo "usage: ops/field-test.sh start record|explore [launch args...]" >&2; exit 2 ;;
+    esac
+    shift
     if running; then echo "already running (pid $(cat "$pidfile")); stop it first" >&2; exit 1; fi
     battery=$(first /battery_state percentage)
     [[ -n $battery ]] || { echo "preflight: base silent (no /battery_state); not starting" >&2; exit 1; }
@@ -53,20 +61,25 @@ case $action in
     # Capture first: grep -q would quit early, kill hz with SIGPIPE and fail the pipeline (pipefail).
     scan=$(timeout 15 ros2 topic hz /scan 2>/dev/null | grep -m1 "average rate" || true)
     [[ -n $scan ]] || { echo "preflight: no /scan from the lidar" >&2; exit 1; }
-    log=$dir/$(date +%Y%m%d-%H%M%S).log
+    stamp=$(date +%Y%m%d-%H%M%S)
+    log=$dir/$stamp.log
+    [[ $mode != record ]] || set -- out:="$HOME/drives/$stamp" "$@"
     # setsid: own session, so the run outlives this SSH connection and can be stopped as a group.
     # A background job starts with Ctrl-C (SIGINT) ignored, and ros2 launch keeps it that way, so
     # restore it: stop relies on it for the explorer to cancel its goal and everything to exit cleanly.
-    setsid nohup env --default-signal=INT ros2 launch pet_explorer explore.launch.py "$@" > "$log" 2>&1 < /dev/null &
+    setsid nohup env --default-signal=INT ros2 launch "${launch[@]}" "$@" > "$log" 2>&1 < /dev/null &
     echo $! > "$pidfile"
     sleep 5
     if ! running; then echo "the stack exited right away:" >&2; tail -20 "$log" >&2; exit 1; fi
-    echo "started (pid $(cat "$pidfile")), battery $pct%, log $log"
+    echo "started $mode (pid $(cat "$pidfile")), battery $pct%, log $log"
+    [[ $mode != record ]] || echo "recording to ~/drives/$stamp"
     ;;
   status)
     if running; then echo "running (pid $(cat "$pidfile")), log $(latest_log)"; else echo "not running"; fi
     log=$(latest_log)
-    [[ -z $log ]] || grep -E '\[explorer\]' "$log" | tail -n 10 || true
+    [[ -z $log ]] || grep -E '\[(explorer|drive_safety)\]' "$log" | tail -n 10 || true
+    bag=~/drives/$(basename "${log:-none}" .log)
+    [[ ! -d $bag ]] || echo "bag $bag: $(du -sh "$bag" | cut -f1)"
     ;;
   logs)
     log=$(latest_log)

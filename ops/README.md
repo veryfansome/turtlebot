@@ -16,12 +16,14 @@ Read-only. Checks the robot's software, base, battery and dock state, lidar, cam
 
 ```bash
 ops/vm-sync.sh [branch]        # pull, rebuild and test ~/turtlebot in the VM (pushed commits only)
-ops/field-test.sh start        # preflight checks, then run SLAM + Nav2 + explorer in the background: drives the robot
-ops/field-test.sh status       # running or not, and the latest explorer lines
+ops/field-test.sh start record  # preflight checks, then SLAM + safety layer + a bag of the session in ~/drives/ (drives nothing itself)
+ops/field-test.sh start explore # preflight checks, then SLAM + Nav2 + explorer: drives the robot (paused)
+ops/field-test.sh status       # running or not, the latest explorer/safety lines, the bag's size
 ops/field-test.sh logs [lines] # the end of the run's log (kept in ~/field-tests/ on the VM)
 ops/field-test.sh save-map     # save the SLAM map to ~/maps/<run>/ on the VM
 ops/field-test.sh stop         # save the map, then stop the run; the explorer cancels its goal first
 ops/field-test.sh estop on|off # the base's e-stop: cut or restore drive motor power
+ops/pull-drives.sh             # copy recorded sessions from the VM to data/drives/ on the Mac (git-ignored)
 ```
 
 `start` refuses if the base is silent, the battery is under 25%, the robot is docked or picked up, or the lidar isn't publishing. Only start a run with someone watching the robot.
@@ -45,7 +47,7 @@ ops/run.sh <pi|vm> <unit> revert   # undo it, restart, verify
 
 | Unit | Changes | Why |
 |---|---|---|
-| `pi/create3-relays` | Uncomments `hazard_detection` and `kidnap_status` in `/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml`; restarts `turtlebot4` | The explorer's bump check needs hazards; pickup handling needs kidnap status. A TurtleBot 4 package update can overwrite the file: check `status` after updates. |
+| `pi/create3-relays` | Uncomments `hazard_detection`, `kidnap_status`, `mouse`, `slip_status` and `wheel_vels` in `/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml`; restarts `turtlebot4` | The safety layer and recordings need hazards (cliffs, wheel drops, bumps) and kidnap status; recordings use the floor sensor (`mouse`), wheel slip and wheel speeds to tell real motion from wheels spinning. A TurtleBot 4 package update can overwrite the file: check `status` after updates. |
 
 ## Not scripted
 

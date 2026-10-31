@@ -321,7 +321,10 @@ collision_monitor:
     state_topic: "collision_monitor_state"
     transform_tolerance: 0.2
     source_timeout: 1.0
-    base_shift_correction: True
+    # pet: was True. Correcting each scan for the robot's motion needs odom at the scan's exact
+    # time; odom arrives over Wi-Fi a little after the scan, the lookup fails and the monitor
+    # stops the robot (48 stops in one 9-minute run). Uncorrected scans are at most ~5 cm off.
+    base_shift_correction: False
     stop_pub_timeout: 2.0
     # Polygons represent zone around the robot for "stop", "slowdown" and "limit" action types,
     # and robot footprint for "approach" action type.
