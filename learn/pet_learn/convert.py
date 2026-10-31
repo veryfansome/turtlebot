@@ -3,7 +3,7 @@
     uv run python -m pet_learn.convert [--drives ../data/drives] [--out ../data/steps] [--force]
 
 Converts every session in drives/ that doesn't have a steps file yet (all of them with --force), and
-prints a summary of each. A session is a bag directory made by `ops/field-test.sh start record`.
+prints a summary of each. Writes <session>.npz (the steps) and <session>.maps.npz (every SLAM map). A session is a bag directory made by `ops/field-test.sh start record`.
 
 Each step holds what the robot sensed and was told at that moment, aligned on one clock (the time
 the VM received each message). See STEP_FIELDS for what's in a steps file.
@@ -52,6 +52,7 @@ def read_session(path: str) -> dict:
         'scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'kidnap', 'dock',
         'battery', 'map_odom', 'odom_base', 'map', 'hazard')}
     meta = {}
+    maps = []  # (time, grid, origin, resolution) for each SLAM map
 
     def add(name, t, value):
         series[name][0].append(t)
@@ -102,6 +103,8 @@ def read_session(path: str) -> dict:
             data = np.frombuffer(raw, dtype=np.int8) if isinstance(raw, (bytes, bytearray)) else np.asarray(raw, dtype=np.int8)
             add('map', t, int((data >= 0).sum()))
             meta['map_resolution'] = msg.info.resolution
+            maps.append((t, data.reshape(msg.info.height, msg.info.width).copy(),
+                         (msg.info.origin.position.x, msg.info.origin.position.y), msg.info.resolution))
 
     # The bag's messages arrive roughly but not strictly in time order.
     out = {}
@@ -109,7 +112,22 @@ def read_session(path: str) -> dict:
         order = np.argsort(np.asarray(times, dtype=np.int64), kind='stable')
         out[name] = (np.asarray(times, dtype=np.int64)[order], [values[i] for i in order])
     out['meta'] = meta
+    out['maps'] = sorted(maps, key=lambda m: m[0])
     return out
+
+
+def save_maps(path: str, maps, start_ns: int):
+    """Every SLAM map of a session in one file: times (s since the first scan), origins,
+    resolutions, and the grids flattened end to end (load them with pet_learn.maps.load_maps)."""
+    grids = [g for _, g, _, _ in maps]
+    np.savez_compressed(
+        path,
+        t=np.array([(t - start_ns) / 1e9 for t, _, _, _ in maps]),
+        origin=np.array([o for _, _, o, _ in maps], dtype=np.float64).reshape(-1, 2),
+        resolution=np.array([r for _, _, _, r in maps], dtype=np.float64),
+        shape=np.array([g.shape for g in grids], dtype=np.int64).reshape(-1, 2),
+        data=np.concatenate([g.ravel() for g in grids]) if grids else np.zeros(0, dtype=np.int8),
+    )
 
 
 def build_steps(s: dict) -> dict:
@@ -217,6 +235,7 @@ def convert(session_dir: str, out_path: str) -> str:
     meta = s['meta']
     np.savez_compressed(out_path, rate=RATE, scan_angle_min=meta.get('scan_angle_min', np.nan),
                         scan_range_max=meta.get('scan_range_max', np.nan), **steps)
+    save_maps(out_path.replace('.npz', '.maps.npz'), s['maps'], s['scan'][0][0])
     return summarize(os.path.basename(session_dir.rstrip('/')), steps, meta)
 
 
