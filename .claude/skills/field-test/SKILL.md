@@ -1,28 +1,33 @@
 ---
 name: field-test
-description: Run the explorer stack (SLAM, Nav2, pet_explorer) on the VM so the TurtleBot 4 drives around, watch it, and stop it, through ops/field-test.sh. Use when the user wants to try code on the robot. Starting it moves the robot, so it needs the user's explicit go in the current conversation; stopping and the e-stop never need permission.
+description: Run a stack on the VM through ops/field-test.sh, watch it, and stop it - record (SLAM + safety layer + a bag of a driving session, for learning to drive) or explore (SLAM + Nav2 + pet_explorer, paused). Use when the user wants to record driving or try code on the robot. Starting needs the user's explicit go in the current conversation; stopping and the e-stop never need permission.
 ---
 
 # Field test
 
-`ops/field-test.sh` controls a background run on the VM. Logs are in `~/field-tests/` on the VM, one per run.
+`ops/field-test.sh` controls a background run on the VM. Logs are in `~/field-tests/` on the VM, one per run. Two modes:
+
+- `record`: SLAM, the safety layer and `ros2 bag record` into `~/drives/<time>/` (see [src/pet_drive](../../../src/pet_drive/README.md)). It drives nothing itself: the user drives with the controller, or a driver publishes on `drive/cmd_vel`. This is how training data gets collected.
+- `explore`: SLAM, Nav2 and the frontier explorer, which drives the robot. Paused since 2026-10-31 in favor of the learned driver.
 
 ## Before starting
 
 1. `ops/vm-sync.sh`, so the VM runs the code you mean to test, with tests passing.
 2. `ops/health.sh` (robot-health skill). Don't start if the base is silent, the lidar isn't publishing, or `safety_override` is wrong. The camera isn't needed by the explorer yet, so a stuck camera alone doesn't block a run.
-3. **Ask the user for a go,** and say what will run (branch and commit, launch arguments). Their go means they're watching the robot, stairs and drop-offs are blocked, cables and fragile things are out of the way, and the robot is undocked. A go is for one run: ask again before restarting it, even if they approved the last one.
+3. **Ask the user for a go,** and say what will run (mode, branch and commit, launch arguments). Their go means they're watching the robot, stairs and drop-offs are blocked, cables and fragile things are out of the way, and the robot is undocked. A go is for one run: ask again before restarting it, even if they approved the last one.
 
 ## Running
 
 ```bash
-ops/field-test.sh start [launch args]   # e.g. rviz:=true doesn't work over SSH; the user opens RViz in the VM
-ops/field-test.sh status                # running or not + the last explorer lines
-ops/field-test.sh logs [lines]          # the end of the full log (SLAM, Nav2, explorer)
+ops/field-test.sh start record [args]   # e.g. camera:=true (raw frames, heavy on Wi-Fi)
+ops/field-test.sh start explore [args]  # rviz:=true doesn't work over SSH; the user opens RViz in the VM
+ops/field-test.sh status                # running or not, the last explorer/safety lines, the bag's size
+ops/field-test.sh logs [lines]          # the end of the full log
+ops/pull-drives.sh                      # after recording: copy bags to data/drives/ on the Mac
 ```
 
 - `start` checks first and refuses if the base is silent, the battery is under 25%, the robot is docked or picked up, or there's no lidar data.
-- While it runs, check `status` every minute or so and tell the user what the explorer is doing: frontiers reached, goals abandoned and why, stuck and probing.
+- While it runs, check `status` every minute or so. Exploring: tell the user what the explorer is doing (frontiers reached, goals abandoned and why, stuck and probing). Recording: that the bag is growing, and any safety-layer stops.
 - For RViz, the user runs `ros2 launch turtlebot4_viz view_navigation.launch.py` in a terminal in the VM's own desktop.
 
 ## Stopping

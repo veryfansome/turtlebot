@@ -1,6 +1,6 @@
 # pet_drive
 
-Driving the TurtleBot 4 without Nav2 (stage 2 of the [roadmap](../../ROADMAP.md)). For now this is the safety layer: the one node that sends drive commands to the wheels, so a scripted wander or a learned policy can drive without being able to hurt the robot or the house.
+Driving the TurtleBot 4 without Nav2 (stage 2 of the [roadmap](../../ROADMAP.md)): the safety layer, the one node that sends drive commands to the wheels, so a scripted wander or a learned policy can drive without being able to hurt the robot or the house; and the recorder, which collects the driving sessions a policy learns from.
 
 ## The safety layer
 
@@ -34,7 +34,35 @@ The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Not
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
 
-## Running (in the VM)
+## Recording driving sessions
+
+`launch/record.launch.py` starts SLAM, the safety layer and `ros2 bag record` (MCAP) into a new directory under `~/drives/`. It drives nothing itself: drive with the controller, or have a driver publish on `drive/cmd_vel`. From the Mac:
+
+```bash
+ops/field-test.sh start record    # preflight checks, then record in the background
+ops/field-test.sh stop            # save the map, close the bag
+ops/pull-drives.sh                # copy the bags to data/drives/ on the Mac
+```
+
+What's recorded, and why:
+
+| Topic | For |
+|---|---|
+| `/scan` | What the driver sees |
+| `/odom` | What the wheels did |
+| `/mouse` | The base's optical floor sensor: what the robot actually did over the floor. Wheels turning while this says it isn't moving is pushing or slipping |
+| `/imu` | Jolts from collisions the bumper misses |
+| `/wheel_status` | Motor currents, which rise when it pushes against something |
+| `/hazard_detection` | Bumps (only at the moment of contact), cliffs, wheel drops |
+| `/kidnap_status`, `/dock_status`, `/battery_state` | Picked up, docked, battery |
+| `/tf`, `/tf_static`, `/map` | Where it is: SLAM's `map` → `odom` is movement measured by SLAM, not the wheels |
+| `/cmd_vel` | What the wheels were told, by the safety layer or the controller |
+| `/drive/cmd_vel`, `/drive/safety` | What a driver asked for, and why the safety layer changed it |
+| `/joy` | The controller: whether a person was driving |
+
+`camera:=true` adds the camera's preview. It's off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, which risks losing lidar scans. Compressed frames would need a camera change on the Pi.
+
+## Running the safety layer alone (in the VM)
 
 ```bash
 ros2 run pet_drive safety

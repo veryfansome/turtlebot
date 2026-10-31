@@ -10,7 +10,7 @@ ops/vm-sync.sh            # stay on the VM's current branch
 ops/vm-sync.sh <branch>   # switch branch first
 ```
 
-It runs on the VM over SSH (`turtlebot-vm`): fetch, fast-forward pull, `colcon build --symlink-install`, then the pet_explorer unit tests. Safe to run without asking; it only touches the VM's `~/turtlebot` checkout and build.
+It runs on the VM over SSH (`turtlebot-vm`): fetch, fast-forward pull, `colcon build --symlink-install`, then the unit tests. Safe to run without asking; it only touches the VM's `~/turtlebot` checkout and build.
 
 - Only pushed commits reach the VM. Commit and push first (with the user's go-ahead, as for any push).
 - It refuses if the VM's checkout has local changes (the user may be experimenting there). Tell the user, don't discard them.

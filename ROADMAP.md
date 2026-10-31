@@ -29,7 +29,7 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 ### 2. Learn to drive
 
 - [ ] **Safety layer** ([src/pet_drive](src/pet_drive/README.md)): the only way commands reach the wheels. Caps speeds, and stops when commands stop coming, the lidar goes quiet, the robot is picked up, or a wheel drops or a cliff is sensed. Bumps aren't blocked: the robot is built to bump, and the driver learns from them. Built and checked on the robot (2026-10-31): commands, the deadman and reversing work. The base reports a bump only at the moment of contact, so pushing afterwards shows up only as commanded speed without matching motion, which the recorder and reward need to compute.
-- [ ] **Recorder**: log the lidar scan, commanded and actual wheel speeds, bumpers and other hazards, and the SLAM pose, whoever is driving. Commanded vs actual speed is the "wheels spinning but not moving" signal.
+- [ ] **Recorder**: `ops/field-test.sh start record` bags the lidar, wheel odometry, the base's optical floor sensor (`/mouse`), IMU, motor currents, hazards, the SLAM pose and every drive command, whoever is driving; `ops/pull-drives.sh` copies the bags to the Mac. Commanded vs actual motion is the "wheels spinning but not moving" signal. Built; not yet run on the robot. Next: turn bags into training steps.
 - [ ] **A scripted wander** as a baseline the learned policy has to beat.
 - [ ] **Demonstrations**: drive with the controller through the places Nav2 got stuck (chair legs, the cushion, the floor strip, the couch edge), 20–30 minutes to start.
 - [ ] **Imitation**: a small policy (lidar downsampled to ~60 beams, wheel speeds, bumpers, time since it last moved → forward speed and turn rate, ~10 Hz) trained to copy the demonstrations.
@@ -80,7 +80,7 @@ The frontier explorer drove Nav2 from 2026-10-29 to 2026-10-31. Its first full r
 - **The lidar stalls silently.** Twice on 2026-10-31 it stopped publishing with no error while still spinning, once right as the robot got caught on the floor strip. `sudo systemctl restart turtlebot4` on the Pi fixes it. The safety layer stops the robot when it happens.
 - **The Pi's Wi-Fi can stop passing large packets.** On 2026-10-31, after hundreds of `brcmfmac` driver errors, packets that need splitting (a lidar scan does) were lost while small ones got through, so the VM saw odometry but no scans. A Pi reboot fixed it; `ops/health.sh` checks for it.
 - **Camera doesn't restart after docking.** The robot's power saver stops the camera on the dock; on undocking, the start request sometimes never gets answered. `sudo systemctl restart turtlebot4` on the Pi fixes it. Turning the power saver off (as an ops unit) would avoid it.
-- **Low obstacles are invisible to the lidar.** It scans one plane, so things lower than that (e.g. the floor strip) only show up as bumps. The camera's depth data could fill this in.
+- **Low obstacles are invisible to the lidar.** It scans one plane, so things lower than that (e.g. the floor strip) only show up as bumps. The camera's depth data could fill this in, but the robot's camera setup publishes only raw RGB preview frames (no depth, no compressed images): about 5-6 MB/s over Wi-Fi. Turning on compressed frames and depth on the Pi (as an ops unit) comes before recording camera data routinely.
 - **Battery.** Off the dock with the lidar and camera on, the battery went from 58% to 28% in about 50 minutes (2026-10-31); field tests refuse to start below 25%.
 
 ## Background reading
