@@ -12,6 +12,19 @@ ops/health.sh
 
 Read-only. Checks the robot's software, base, battery and dock state, lidar, camera, relays and `safety_override`, the state of each unit, and whether the VM can see the robot over ROS. Lidar and camera show as "off (docked)" while the robot is docked, which is normal.
 
+## The VM and field tests
+
+```bash
+ops/vm-sync.sh [branch]        # pull, rebuild and test ~/turtlebot in the VM (pushed commits only)
+ops/field-test.sh start        # preflight checks, then run SLAM + Nav2 + explorer in the background: drives the robot
+ops/field-test.sh status       # running or not, and the latest explorer lines
+ops/field-test.sh logs [lines] # the end of the run's log (kept in ~/field-tests/ on the VM)
+ops/field-test.sh stop         # stop the run; the explorer cancels its goal first
+ops/field-test.sh estop on|off # the base's e-stop: cut or restore drive motor power
+```
+
+`start` refuses if the base is silent, the battery is under 25%, the robot is docked or picked up, or the lidar isn't publishing. Only start a run with someone watching the robot.
+
 ## Units
 
 A unit is one reversible change, a script under `ops/pi/` or `ops/vm/`, run with:
