@@ -152,7 +152,10 @@ local_costmap:
                   [-0.134,  0.134],
                   [ 0.000,  0.189],
                   [ 0.134,  0.134]]"
-      plugins: ["static_layer", "voxel_layer", "inflation_layer"]
+      # pet: was ["static_layer", "voxel_layer", "inflation_layer"]. Without the SLAM map, the local
+      # costmap holds only what the lidar sees now; in clutter the SLAM map smears chair and table legs
+      # into thick blobs that close off gaps the robot fits through. The global costmap still has it.
+      plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 4.0
