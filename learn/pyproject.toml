@@ -7,6 +7,9 @@ dependencies = [
     "numpy",
     "mcap",
     "mcap-ros2-support",
+    "scipy>=1.18.1",
+    "scikit-image>=0.26.0",
+    "torch>=2.15.0",
 ]
 
 [dependency-groups]

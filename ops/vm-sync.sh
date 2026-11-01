@@ -9,7 +9,7 @@ ssh -o BatchMode=yes turtlebot-vm bash -s -- "${1:-}" <<'REMOTE'
 set -euo pipefail
 branch=${1:-}  # SSH drops an empty argument
 cd ~/turtlebot
-if pgrep -f "ros2 launch pet_explorer" >/dev/null; then
+if pgrep -f "ros2 launch pet_" >/dev/null; then  # explore or record
   echo "error: a field test is running; stop it first (ops/field-test.sh stop)" >&2
   exit 1
 fi
@@ -26,6 +26,6 @@ set +u
 source /opt/ros/jazzy/setup.bash
 set -u
 colcon build --symlink-install 2>&1 | tail -2
-colcon test --packages-select pet_explorer >/dev/null 2>&1 || true
+colcon test --packages-select pet_drive pet_explorer >/dev/null 2>&1 || true
 colcon test-result --all
 REMOTE

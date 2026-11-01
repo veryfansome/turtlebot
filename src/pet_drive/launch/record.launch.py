@@ -25,6 +25,7 @@ TOPICS = [
     '/wheel_status',  # motor currents: they rise when it pushes against something
     '/wheel_vels',  # actual wheel speeds
     '/slip_status',  # the base's own wheel-slip detection
+    '/ir_intensity',  # the 7 front infrared proximity sensors, at bumper height: things below the lidar
     '/hazard_detection',  # bumps (reported only at the moment of contact), cliffs, wheel drops
     '/kidnap_status',
     '/dock_status',

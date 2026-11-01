@@ -76,3 +76,15 @@ def test_stops_announce_and_resuming_releases_the_light_ring():
     assert announcement('no command', 'idle') == (None, None)
     assert announcement('idle', 'ok') == (None, None)
     assert announcement('no command', 'ok') == (None, None)
+
+
+def test_rescue_button_beeps_once_per_press():
+    from pet_drive.feedback import RESCUE_BUTTON, rescue_pressed
+    up, down = [0] * 12, [0] * 12
+    down[RESCUE_BUTTON] = 1
+    held, pressed = rescue_pressed(False, down)
+    assert held and pressed
+    held, pressed = rescue_pressed(held, down)  # still held: no second beep
+    assert held and not pressed
+    assert rescue_pressed(held, up) == (False, False)
+    assert rescue_pressed(False, []) == (False, False)

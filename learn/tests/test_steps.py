@@ -2,16 +2,22 @@ import math
 
 import numpy as np
 
-from pet_learn.steps import bump_side, compose, downsample_scan, latest_before, yaw_from_quaternion
+from pet_learn.steps import bump_side, compose, latest_before, robot_sectors, yaw_from_quaternion
 
 
-def test_downsample_keeps_the_nearest_return_per_sector():
-    ranges = [5.0, 1.0, 5.0, 5.0, float('inf'), 0.0]
-    assert downsample_scan(ranges, 12.0, n=3).tolist() == [1.0, 5.0, 12.0]
+def test_robot_sectors_rotate_into_the_robot_frame():
+    # 4 beams in the lidar frame at -90, 0, 90, 180 degrees; lidar mounted at +90 degrees, so in the
+    # robot frame they're at 0 (ahead), 90 (left), 180 (behind), -90 (right).
+    ranges = [1.0, 2.0, 3.0, 4.0]
+    s = robot_sectors(ranges, -math.pi / 2, math.pi / 2, math.pi / 2, 9.0, n=4)
+    # Sectors: [-180, -90) behind-right, [-90, 0) right, [0, 90) ahead-left, [90, 180) left-behind
+    assert s.tolist() == [3.0, 4.0, 1.0, 2.0]
 
 
-def test_downsample_caps_at_range_max():
-    assert downsample_scan([20.0, float('nan')], 12.0, n=2).tolist() == [12.0, 12.0]
+def test_reversed_sectors_mirror_left_and_right():
+    left_only = robot_sectors([1.0], math.radians(30), 0.0, 0.0, 9.0, n=8)  # one beam 30 degrees left
+    right_only = robot_sectors([1.0], math.radians(-30), 0.0, 0.0, 9.0, n=8)
+    assert left_only[::-1].tolist() == right_only.tolist()
 
 
 def test_latest_before():
