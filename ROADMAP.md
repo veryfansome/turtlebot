@@ -43,7 +43,11 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 - [ ] **Nav2 as the baseline**: run Nav2 ([config/nav2.yaml](config/nav2.yaml)) and the learned driver from the same starts to the same goals, including goals past the known trouble spots, and compare their reports.
 - [ ] **Front IR proximity sensors**: the base has 7 infrared sensors across the front at bumper height (`ir_intensity`), which should see things the lidar's scan plane misses, like chair legs, a cushion, maybe the floor strip. Relay them (one more topic in the `pi/create3-relays` ops unit), record them, add them to the training steps, and check what they actually see in the house.
 - [ ] **Demonstrations**: drive with the controller through the places Nav2 got stuck (chair legs, the cushion, the floor strip, the couch edge), 20–30 minutes to start. Recordings don't need goals: any later pose in a session can be the goal for the steps before it (hindsight relabeling), so one session splits into many episodes of any length, each scored against its own goal.
-- [ ] **Bootstrap from recorded driving**: a small policy (lidar in 60 sectors, wheel speeds, floor-sensor speed, bumps, the goal relative to the robot → forward speed and turn rate, 10 Hz) and its value estimates, trained offline on the recorded sessions relabeled with goals and scored with the reward. Not copying the driving: the reward decides what was good, so meandering stretches still teach.
+- [ ] **A driving model, bootstrapped from recorded driving** ([learn/MODEL.md](learn/MODEL.md)): one network with a shared state, trained on several objectives at once:
+  - a world model: from the current readings and the drive command, predict every sensor up to a second ahead (lidar, floor speed, wheel speeds and currents, bumps, slip, pose change). Dozens of real targets per step, so it learns a lot from a little driving, and it doesn't need goals;
+  - values and a policy for reaching goal poses (IQL), on the same state, from recorded sessions relabeled with goals and scored with the reward. Not copying the driving: the reward decides what was good, so meandering stretches still teach.
+  - Validated offline on held-out driving: the world model against "nothing changes" baselines, values against actual returns.
+  - Built ([learn/MODEL.md](learn/MODEL.md)); first results from one session: own motion learned well, the environment a little, values track returns (rank correlation 0.72), the policy only partly goal-directed. Needs more, more varied driving.
 - [ ] **Reinforcement learning on the robot**: off-policy (e.g. SAC), learning from everything ever recorded, relabeled with goals, so every minute of driving counts. Training goals are reachable poses in the map, near ones first, then farther, plus goals past the known trouble spots.
 - [ ] Maybe: pretrain in the TurtleBot 4 Gazebo simulator for walls and open space. It can't model a cushion or a floor strip, so the house stays the main teacher.
 - Watch: Wi-Fi lag, the lidar stalling (see Known issues), and about an hour of battery per session, so data collection happens in short sessions.
@@ -67,6 +71,7 @@ The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own 
 
 ### 6. A world model
 
+- [ ] The driving model (stage 2) is already a world model for the robot's own senses; this stage adds the camera.
 - [ ] Train a model to predict the feature vector of the next view from the current view and the planned move. Predicting features rather than raw pixels is much easier to train, and it uses the data from stage 5.
 - [ ] Its prediction error is the measure of surprise.
 

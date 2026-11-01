@@ -44,6 +44,17 @@ Learning to drive means reaching a goal pose (position and heading) efficiently;
 
 First session (controller, 300 hindsight episodes): SPL 0.48, 19 s and 4.1 A·s per metre of shortest path, reward −1.41 per episode. That's expected: a person driving around wasn't heading for a point a random 3–60 s later, so most episodes meander. The direct ones (SPL ≥ 0.8, 22 of 300) earn +0.84 on average, the least direct (SPL < 0.3) −2.96. Recorded driving bootstraps the learner rather than being copied: meandering episodes still teach it what things are worth, because they're scored.
 
+## The driving model
+
+A world model with goal-reaching values and a policy on a shared state, trained offline: see [MODEL.md](MODEL.md) for the design and first results.
+
+```bash
+uv run python -m pet_learn.train_world                       # world model; prints held-out error vs baselines
+uv run python -m pet_learn.train_driver --world ../data/models/world-<time>.pt   # values and policy on top
+```
+
+Models are saved to `data/models/` (git-ignored).
+
 ## Tests
 
 ```bash

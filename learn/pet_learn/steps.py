@@ -5,13 +5,21 @@ import math
 import numpy as np
 
 
-def downsample_scan(ranges, range_max: float, n: int = 60) -> np.ndarray:
-    """Cut a lidar scan into n equal sectors and keep the nearest return in each: an obstacle anywhere
-    in a sector counts. Missing or out-of-range returns count as range_max (nothing seen)."""
+def robot_sectors(ranges, angle_min: float, angle_increment: float, mount_yaw: float, range_max: float,
+                  n: int = 60, min_range: float = 0.15) -> np.ndarray:
+    """Cut a lidar scan into n equal sectors of the robot's frame and keep the nearest return in each.
+    Sector k spans robot angles [-pi + k*w, -pi + (k+1)*w) with w = 2*pi/n: sector 0 starts directly
+    behind, straight ahead is the boundary between sectors n/2 - 1 and n/2, and reversing the sector
+    order mirrors the scan left to right. Missing or out-of-range returns count as range_max, and so do
+    returns closer than min_range: on the TurtleBot 4 those are the robot's own support posts (about
+    0.13 m away at +-60 degrees), and nothing else can be that close through the robot's body."""
     r = np.asarray(ranges, dtype=np.float32)
-    r = np.where(np.isfinite(r) & (r > 0), np.minimum(r, range_max), range_max)
-    sectors = np.array_split(r, n)
-    return np.array([s.min() if len(s) else range_max for s in sectors], dtype=np.float32)
+    r = np.where(np.isfinite(r) & (r >= min_range), np.minimum(r, range_max), range_max)
+    angles = angle_min + np.arange(len(r)) * angle_increment + mount_yaw
+    sector = np.floor((np.mod(angles + np.pi, 2 * np.pi)) / (2 * np.pi / n)).astype(int) % n
+    out = np.full(n, range_max, dtype=np.float32)
+    np.minimum.at(out, sector, r)
+    return out
 
 
 def latest_before(times: np.ndarray, grid: np.ndarray) -> np.ndarray:

@@ -16,7 +16,7 @@ import os
 from mcap_ros2.reader import read_ros2_messages
 import numpy as np
 
-from pet_learn.steps import bump_side, compose, downsample_scan, latest_before, yaw_from_quaternion
+from pet_learn.steps import bump_side, compose, latest_before, robot_sectors, yaw_from_quaternion
 
 RATE = 10.0  # steps per second
 SCAN_SECTORS = 60
@@ -25,7 +25,7 @@ HAZARD_TYPES = {'bump': 1, 'cliff': 2, 'stall': 3, 'wheel_drop': 4}
 
 STEP_FIELDS = {
     't': 'seconds since the first scan',
-    'scan': f'lidar, nearest return in each of {SCAN_SECTORS} equal sectors (m), starting at scan_angle_min',
+    'scan': f'lidar, nearest return in each of {SCAN_SECTORS} equal sectors of the robot frame (m): sector 0 starts directly behind (-180 degrees), counterclockwise, straight ahead between sectors {SCAN_SECTORS // 2 - 1} and {SCAN_SECTORS // 2}',
     'cmd': 'drive command the wheels were told: forward m/s, turn rad/s (0 if none in the last 0.5 s)',
     'joy_active': 'a controller button (the enable button, while driving) was held: a person was driving',
     'odom_vel': 'wheel odometry: forward m/s, turn rad/s',
@@ -53,6 +53,8 @@ def read_session(path: str) -> dict:
         'battery', 'map_odom', 'odom_base', 'map', 'hazard')}
     meta = {}
     maps = []  # (time, grid, origin, resolution) for each SLAM map
+    raw_scans = []  # (time, ranges, angle_min, angle_increment, range_max, frame)
+    static = {}  # frame -> (parent, yaw), from /tf_static
 
     def add(name, t, value):
         series[name][0].append(t)
@@ -61,9 +63,14 @@ def read_session(path: str) -> dict:
     for m in read_ros2_messages(path):
         t, topic, msg = m.log_time_ns, m.channel.topic, m.ros_msg
         if topic == '/scan':
-            add('scan', t, downsample_scan(msg.ranges, msg.range_max, SCAN_SECTORS))
-            meta.setdefault('scan_angle_min', msg.angle_min)
+            # Kept raw until the lidar's mounting is known (from /tf_static, which can come later).
+            raw_scans.append((t, np.asarray(msg.ranges, dtype=np.float32), msg.angle_min, msg.angle_increment,
+                              msg.range_max, msg.header.frame_id))
             meta.setdefault('scan_range_max', msg.range_max)
+        elif topic == '/tf_static':
+            for tf in msg.transforms:
+                r = tf.transform.rotation
+                static[tf.child_frame_id] = (tf.header.frame_id, yaw_from_quaternion(r.x, r.y, r.z, r.w))
         elif topic == '/cmd_vel':
             add('cmd', t, (msg.twist.linear.x, msg.twist.angular.z))
         elif topic == '/joy':
@@ -105,6 +112,20 @@ def read_session(path: str) -> dict:
             meta['map_resolution'] = msg.info.resolution
             maps.append((t, data.reshape(msg.info.height, msg.info.width).copy(),
                          (msg.info.origin.position.x, msg.info.origin.position.y), msg.info.resolution))
+
+    def yaw_in_base(frame):
+        yaw = 0.0
+        while frame != 'base_link':
+            if frame not in static:
+                raise ValueError(f'no /tf_static path from {frame} to base_link')
+            frame, step = static[frame]
+            yaw += step
+        return yaw
+
+    for t, ranges, angle_min, inc, range_max, frame in raw_scans:
+        add('scan', t, robot_sectors(ranges, angle_min, inc, yaw_in_base(frame), range_max, SCAN_SECTORS))
+    if raw_scans:
+        meta['lidar_mount_yaw'] = yaw_in_base(raw_scans[0][5])
 
     # The bag's messages arrive roughly but not strictly in time order.
     out = {}
@@ -233,8 +254,8 @@ def convert(session_dir: str, out_path: str) -> str:
     steps = build_steps(s)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     meta = s['meta']
-    np.savez_compressed(out_path, rate=RATE, scan_angle_min=meta.get('scan_angle_min', np.nan),
-                        scan_range_max=meta.get('scan_range_max', np.nan), **steps)
+    np.savez_compressed(out_path, rate=RATE, scan_range_max=meta.get('scan_range_max', np.nan),
+                        lidar_mount_yaw=meta.get('lidar_mount_yaw', np.nan), **steps)
     save_maps(out_path.replace('.npz', '.maps.npz'), s['maps'], s['scan'][0][0])
     return summarize(os.path.basename(session_dir.rstrip('/')), steps, meta)
 
