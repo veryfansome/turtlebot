@@ -7,6 +7,11 @@ before it become transitions, scored with the goal-reaching reward.
 
 Only hindsight transitions teach the policy (Transitions.hindsight): the recorded commands weren't
 aimed at random goals, so for those they say nothing about how to reach the goal.
+
+A rescue (the robot got stuck and a person freed it) ends every episode that runs into it as a
+failure, with RewardParams.rescue_penalty. Each rescue gets rescue_goals episodes, with goals the
+robot reached later in the session or random ones: being stuck is bad wherever it was going. These
+teach only the values; the policy learns to avoid getting stuck through them.
 """
 from dataclasses import dataclass
 import math
@@ -47,24 +52,32 @@ class Transitions:
 
 
 def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, rng: np.random.Generator,
-            window_s: float = 30.0, hindsight: float = 0.7, gamma: float = 0.99,
+            window_s: float = 30.0, hindsight: float = 0.7, gamma: float = 0.99, rescue_goals: int = 100,
             p: RewardParams = RewardParams()) -> Transitions:
-    """Transitions for n_goals goals, using only usable steps (ok) in [lo, hi)."""
+    """Transitions for n_goals goals, using only usable steps (ok) in [lo, hi), plus rescue_goals for
+    each rescue in that range."""
     rate = float(steps['rate'])
     dt = 1.0 / rate
     window = int(window_s * rate)
     pose = steps['pose'].astype(np.float64)
     currents = np.abs(steps['wheel_current']).sum(axis=1) / 1000.0
     candidates = np.flatnonzero(ok[lo:hi]) + lo
+    rescues = [int(r) for r in np.flatnonzero(steps.get('rescue', np.zeros(len(ok), bool))[lo:hi]) + lo
+               if r > lo and ok[r - 1]]
+    jobs = [(int(rng.choice(candidates)), None) for _ in range(n_goals)]
+    jobs += [(r - 1, r) for r in rescues for _ in range(rescue_goals)]
     parts = []
-    for e in range(n_goals):
-        goal_k = int(rng.choice(candidates))
+    for e, (goal_k, rescue) in enumerate(jobs):
+        # goal_k is the episode's last step; for a rescue episode, the step before the press.
         gmap = maps.map_at(steps['t'][goal_k])
         if gmap is None:
             continue
-        is_hindsight = rng.random() < hindsight
+        is_hindsight = rescue is None and rng.random() < hindsight
+        later = candidates[candidates > rescue] if rescue is not None else []
         if is_hindsight:
             goal = pose[goal_k]
+        elif len(later) and rng.random() < 0.5:
+            goal = pose[int(rng.choice(later))]  # somewhere it went after being freed
         else:  # a random pose in mapped free space
             free = np.argwhere(passable(gmap, 0.2))
             if len(free) == 0:
@@ -94,6 +107,9 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
         if done.any():
             cut = int(np.argmax(done)) + 1
             ks, reward, done = ks[:cut + 1], reward[:cut], done[:cut]
+        elif rescue is not None:  # it ends stuck, waiting for a person
+            reward[-1] -= p.rescue_penalty
+            done[-1] = True
         g = goal_features(pose[ks], goal)
         ret = np.zeros(len(reward))
         acc = 0.0

@@ -22,6 +22,7 @@ Each steps file holds one row per step at 10 Hz, aligned on the time the VM rece
 | `scan` | (n, 60) | lidar: nearest return in each of 60 equal sectors (m), starting at `scan_angle_min` |
 | `cmd` | (n, 2) | what the wheels were told: forward m/s, turn rad/s |
 | `joy_active` | (n,) | a person was driving (a controller button held) |
+| `rescue` | (n,) | the rescue button (Y) was pressed: the robot was stuck and a person freed it |
 | `odom_vel` | (n, 2) | wheel odometry: forward m/s, turn rad/s |
 | `wheel_vels`, `wheel_current` | (n, 2) | wheel speeds (rad/s) and motor currents (mA), left and right |
 | `mouse_speed`, `mouse_quality` | (n,) | speed over the floor from the optical floor sensor (m/s), and its tracking quality |

@@ -26,7 +26,8 @@ def session_report(name: str, steps: dict, episodes) -> str:
     spl = np.array([e.spl for e in episodes])
     shortest = np.array([e.shortest for e in episodes])
     per_m = lambda values: np.sum(values) / max(shortest.sum(), 1e-9)
-    rescues = int((np.diff(steps['kidnapped'].astype(int)) == 1).sum())
+    rescues = int(steps['rescue'].sum()) if 'rescue' in steps else 0
+    pickups = int((np.diff(steps['kidnapped'].astype(int)) == 1).sum())
     stuck = ((steps['cmd'][:, 0] > 0.03) & (steps['mouse_speed'] < 0.01) & ~steps['docked']).mean()
     return '\n'.join([
         f'{name} ({driver}, {minutes:.1f} min, {len(episodes)} episodes, shortest paths '
@@ -37,7 +38,7 @@ def session_report(name: str, steps: dict, episodes) -> str:
         f'  reward per episode {np.mean([e.reward for e in episodes]):+.2f} '
         f'(per metre {per_m([e.reward for e in episodes]):+.2f})',
         f'  session: bumps {steps["bump"].any(axis=1).sum() / minutes:.1f}/min, '
-        f'stuck {stuck * 100:.1f}% of the time, rescues {rescues}',
+        f'stuck {stuck * 100:.1f}% of the time, rescues {rescues}, pickups {pickups}',
     ])
 
 

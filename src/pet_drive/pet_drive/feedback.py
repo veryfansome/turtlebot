@@ -15,6 +15,18 @@ STOPS = {
 # someone starting to drive).
 RESUMED = [(660, 0.1), (880, 0.1)]
 
+# The controller's rescue button: pressed just before a person frees a stuck robot, so recordings
+# mark it (learn/pet_learn/convert.py reads the same button). Y on the TurtleBot 4 controller; X is
+# the display menu's Back and B the e-stop. The tone confirms the press was seen.
+RESCUE_BUTTON = 2
+RESCUE_NOTED = [(392, 0.15), (392, 0.15)]  # two low beeps
+
+
+def rescue_pressed(was_held: bool, buttons) -> tuple:
+    """(held now, pressed just now) from a controller message's buttons."""
+    held = len(buttons) > RESCUE_BUTTON and buttons[RESCUE_BUTTON] == 1
+    return held, held and not was_held
+
 
 def announcement(previous: str, current: str):
     """What to play and show when the safety layer's reason changes from previous to current:

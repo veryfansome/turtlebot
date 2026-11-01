@@ -11,10 +11,10 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import Joy, LaserScan
 from std_msgs.msg import String
 
-from pet_drive.feedback import announcement
+from pet_drive.feedback import RESCUE_NOTED, announcement, rescue_pressed
 from pet_drive.safety import Limits, SafetyGate
 
 # Zero commands sent after the driver stops, so the robot stops even if one is lost.
@@ -36,6 +36,7 @@ class SafetyNode(Node):
         self.stops_left = 0
         self.reason = None
         self.ring_overridden = False
+        self.rescue_held = False
 
         self.cmd_pub = self.create_publisher(TwistStamped, 'cmd_vel', 10)
         # Why the last command was changed ('ok' if it wasn't), for logs and the recorder.
@@ -46,6 +47,7 @@ class SafetyNode(Node):
         self.create_subscription(LaserScan, 'scan', self.on_scan, qos_profile_sensor_data)
         self.create_subscription(HazardDetectionVector, 'hazard_detection', self.on_hazards, qos_profile_sensor_data)
         self.create_subscription(KidnapStatus, 'kidnap_status', self.on_kidnap, qos_profile_sensor_data)
+        self.create_subscription(Joy, 'joy', self.on_joy, qos_profile_sensor_data)
         self.create_timer(1.0 / rate, self.tick)
         self.get_logger().info(f'Safety layer up: {self.gate.limits}')
 
@@ -63,6 +65,13 @@ class SafetyNode(Node):
 
     def on_kidnap(self, msg: KidnapStatus):
         self.gate.on_kidnap(msg.is_kidnapped)
+
+    def on_joy(self, msg: Joy):
+        self.rescue_held, pressed = rescue_pressed(self.rescue_held, msg.buttons)
+        if pressed:
+            self.get_logger().info('Rescue button pressed')
+            if self.feedback:
+                self.announce(RESCUE_NOTED, None)
 
     def tick(self):
         now = self.now()

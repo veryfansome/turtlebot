@@ -15,6 +15,7 @@ from pet_learn.reward import RewardParams, arrived, episode_rewards, heading_err
 MAX_STEP = 0.1  # m per 0.1 s step; more is a SLAM correction or reset, not driving (top speed 0.03)
 STUCK_FORWARD = 0.03  # told to go forward faster than this (m/s) ...
 STUCK_FLOOR = 0.01  # ... while the floor sensor says slower than this: pushing without moving
+RESCUE_HANDLING_S = 10.0  # after a rescue press, a person is handling the robot until it's set down, or this long
 
 
 @dataclass
@@ -39,11 +40,30 @@ class Episode:
 
 def usable(steps: dict) -> np.ndarray:
     """Steps an episode can include: SLAM has a pose, the robot is driving on the floor (not docked
-    or picked up), and the pose didn't jump (a SLAM reset or big correction)."""
+    or picked up, not being rescued), and the pose didn't jump (a SLAM reset or big correction)."""
     pose = steps['pose']
-    ok = np.isfinite(pose).all(axis=1) & ~steps['docked'] & ~steps['kidnapped']
+    ok = np.isfinite(pose).all(axis=1) & ~steps['docked'] & ~steps['kidnapped'] & ~rescue_handling(steps)
     jump = np.hypot(*np.diff(pose[:, :2], axis=0, prepend=pose[:1, :2]).T)
     return ok & ~(jump > MAX_STEP)
+
+
+def rescue_handling(steps: dict) -> np.ndarray:
+    """Steps where a person is freeing the robot: from each rescue press until it's been picked up and
+    set down again, or RESCUE_HANDLING_S if it isn't picked up."""
+    n = len(steps['t'])
+    handling = np.zeros(n, dtype=bool)
+    rescue = steps.get('rescue', np.zeros(n, dtype=bool))
+    limit = int(RESCUE_HANDLING_S * float(steps['rate']))
+    for r in np.flatnonzero(rescue):
+        end = min(n, r + limit)
+        lifted = np.flatnonzero(steps['kidnapped'][r:end])
+        if len(lifted):  # until set down
+            k = r + int(lifted[0])
+            while k < n and steps['kidnapped'][k]:
+                k += 1
+            end = k
+        handling[r:end] = True
+    return handling
 
 
 def evaluate(steps: dict, maps, start: int, last: int, goal, p: RewardParams = RewardParams(),

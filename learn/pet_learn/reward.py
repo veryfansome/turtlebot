@@ -26,6 +26,9 @@ class RewardParams:
     # time cost while driving and 40-70% while pushing.
     time_cost: float = 0.1
     energy_cost: float = 0.1
+    # Needing a person to free it ends the episode as a failure, whatever the goal: as costly as 30 s of
+    # driving, so getting stuck is worse than taking the long way round.
+    rescue_penalty: float = 3.0
 
 
 def heading_error(yaw: float, goal_yaw: float) -> float:

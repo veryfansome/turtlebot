@@ -30,7 +30,7 @@ When it stops the robot for a reason, it tells whoever is nearby (`feedback`, on
 | Picked up | three rising tones | blue |
 | Driving again after one of the last three | two rising blips | back to normal |
 
-The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving.
+The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving, except one thing: pressing the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)) plays two low beeps, so you know the press was seen.
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
 
@@ -60,7 +60,7 @@ What's recorded, and why:
 | `/tf`, `/tf_static`, `/map` | Where it is: SLAM's `map` → `odom` is movement measured by SLAM, not the wheels |
 | `/cmd_vel` | What the wheels were told, by the safety layer or the controller |
 | `/drive/cmd_vel`, `/drive/safety` | What a driver asked for, and why the safety layer changed it |
-| `/joy` | The controller: whether a person was driving |
+| `/joy` | The controller: whether a person was driving, and rescues (press Y just before freeing a stuck robot) |
 
 `camera:=true` adds the camera's preview. It's off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, which risks losing lidar scans. Compressed frames would need a camera change on the Pi.
 

@@ -62,3 +62,29 @@ def test_hindsight_episodes_stay_within_usable_steps():
     assert episodes
     for e in episodes:
         assert not (e.start < 110 and e.end >= 100)
+
+
+def test_a_rescue_is_not_usable_until_the_robot_is_set_down():
+    steps = drive([(0.5, 1.5, 0.0)] * 300)
+    steps['rescue'] = np.zeros(300, bool)
+    steps['rescue'][100] = True
+    steps['kidnapped'][120:150] = True  # lifted out 2 s after the press, set down 3 s later
+    steps['rescue'][250] = True  # freed without lifting: 10 s
+    ok = usable(steps)
+    assert ok[99] and not ok[100:150].any() and ok[150]
+    assert not ok[250:350].any() and ok[249]
+
+
+def test_episodes_that_run_into_a_rescue_end_as_failures():
+    from pet_learn.goals import relabel
+    steps = drive([(0.5 + 0.005 * k, 1.5, 0.0) for k in range(300)])
+    steps['rescue'] = np.zeros(300, bool)
+    steps['rescue'][150] = True
+    steps['kidnapped'][160:170] = True
+    ok = usable(steps)
+    t = relabel(steps, OPEN, ok, 0, 300, 0, np.random.default_rng(0), rescue_goals=20)
+    assert len(t.step) and not t.hindsight.any()
+    last = t.step == 148  # the last move, into the step before the press
+    assert last.any() and t.done[last].all()
+    assert (t.reward[last] < -RewardParams().rescue_penalty + 0.5).all()
+    assert (t.step < 150).all()
