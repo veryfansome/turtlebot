@@ -20,6 +20,8 @@ RESUMED = [(660, 0.1), (880, 0.1)]
 # the display menu's Back and B the e-stop. The tone confirms the press was seen.
 RESCUE_BUTTON = 2
 RESCUE_NOTED = [(392, 0.15), (392, 0.15)]  # two low beeps
+# Played once when the safety layer starts and the base is listening: a recording has begun.
+STARTED = [(392, 0.1), (587, 0.1), (784, 0.25)]  # rising, low to high
 
 
 def rescue_pressed(was_held: bool, buttons) -> tuple:
