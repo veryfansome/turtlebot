@@ -14,11 +14,13 @@ from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import Joy, LaserScan
 from std_msgs.msg import String
 
-from pet_drive.feedback import RESCUE_NOTED, announcement, rescue_pressed
+from pet_drive.feedback import RESCUE_NOTED, STARTED, announcement, rescue_pressed
 from pet_drive.safety import Limits, SafetyGate
 
 # Zero commands sent after the driver stops, so the robot stops even if one is lost.
 STOP_REPEATS = 3
+# Half-second checks the base's audio relay must be subscribed for before the start tone plays.
+START_TONE_WAIT = 4
 
 
 class SafetyNode(Node):
@@ -49,6 +51,9 @@ class SafetyNode(Node):
         self.create_subscription(KidnapStatus, 'kidnap_status', self.on_kidnap, qos_profile_sensor_data)
         self.create_subscription(Joy, 'joy', self.on_joy, qos_profile_sensor_data)
         self.create_timer(1.0 / rate, self.tick)
+        if self.feedback:
+            self.listener_seen = 0
+            self.start_timer = self.create_timer(0.5, self.announce_start)
         self.get_logger().info(f'Safety layer up: {self.gate.limits}')
 
     def now(self):
@@ -65,6 +70,18 @@ class SafetyNode(Node):
 
     def on_kidnap(self, msg: KidnapStatus):
         self.gate.on_kidnap(msg.is_kidnapped)
+
+    def announce_start(self):
+        # Waits for the relay to the base to subscribe, or the tone would go nowhere, and then a
+        # little longer: a subscriber can be seen before messages actually reach it.
+        if self.audio_pub.get_subscription_count() == 0:
+            self.listener_seen = 0
+            return
+        self.listener_seen += 1
+        if self.listener_seen >= START_TONE_WAIT:
+            self.announce(STARTED, None)
+            self.get_logger().info('Start tone played')
+            self.start_timer.cancel()
 
     def on_joy(self, msg: Joy):
         self.rescue_held, pressed = rescue_pressed(self.rescue_held, msg.buttons)

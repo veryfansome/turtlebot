@@ -30,7 +30,7 @@ When it stops the robot for a reason, it tells whoever is nearby (`feedback`, on
 | Picked up | three rising tones | blue |
 | Driving again after one of the last three | two rising blips | back to normal |
 
-The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving, except one thing: pressing the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)) plays two low beeps, so you know the press was seen.
+The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving, except two things: one long note once when it starts and the base is listening (so you know a recording has begun), and two low beeps when you press the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)), so you know the press was seen.
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
 

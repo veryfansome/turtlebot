@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from pet_learn.dataset import MASKS, TARGETS
+from pet_learn.dataset import MASKS, SENSORS, TARGETS
 
 
 def mlp(sizes, out_norm=False):
@@ -54,12 +54,19 @@ class WorldModel(nn.Module):
         return self.pose_head(torch.cat([z0.expand_as(zk), zk], dim=-1))
 
 
+def current_readings(batch: dict) -> dict:
+    """Each target's reading at the windows' first step (B, 1, size), as the encoder saw it: a reading it
+    couldn't see (missing or hidden) is 0, the mean in standardized units, so predictions can't lean on it."""
+    return {name: batch[name][:, :1] * batch[f'{name}_seen'][:, :1] if name in SENSORS else batch[name][:, :1]
+            for name in TARGETS}
+
+
 def world_loss(model: WorldModel, batch: dict, bump_weight: float = 10.0, consistency: float = 1.0):
     """Prediction error of every head at every horizon (0..h), plus latent consistency. Returns the
     total and the parts."""
     x = batch['inputs']
     zs = model.rollout(model.encode(x[:, 0]), batch['actions'])  # (B, h+1, z)
-    preds = model.decode(zs, {name: batch[name][:, :1] for name in TARGETS})
+    preds = model.decode(zs, current_readings(batch))
     parts = {}
     for name, (size, binary) in TARGETS.items():
         target = batch[name]

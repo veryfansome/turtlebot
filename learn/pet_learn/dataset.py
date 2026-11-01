@@ -2,7 +2,7 @@
 and windows of consecutive steps for predicting up to H steps ahead."""
 import numpy as np
 
-from pet_learn.episodes import usable
+from pet_learn.episodes import scored, usable
 
 FORWARD_CAP, TURN_CAP = 0.3, 1.5  # the safety layer's caps (m/s, rad/s): actions are scaled by them
 SCAN_CAP = 4.0  # lidar sectors are capped at this (m): beyond it, distance matters little for driving
@@ -21,19 +21,42 @@ TARGETS = {
     'slip': (1, True),
     'ir': (7, False),
 }
-# Targets missing in some steps (sessions recorded before the IR sensors were relayed): name -> the
-# batch key of a (n, 1) mask that is 1 where the target is real. Missing values are stored as 0.
-MASKS = {'ir': 'ir_ok'}
+# Readings that can be missing: their messages stopped arriving (the lidar's often do first, over
+# Wi-Fi), or weren't recorded (IR, before it was relayed). Each has a batch key for a (n, 1) mask that is
+# 1 where the reading is real; missing readings are 0, as targets and as inputs, and the encoder sees
+# the masks too, so it can learn to drive on what's left.
+SENSORS = ('scan', 'floor', 'odom', 'wheels', 'current', 'ir')
+MASKS = {name: f'{name}_ok' for name in SENSORS}
+# Where each sensor's readings and its "real" flag sit in the encoder's inputs (inputs()).
+INPUT_COLUMNS = {'scan': slice(0, 60), 'floor': slice(60, 61), 'odom': slice(61, 63), 'wheels': slice(63, 65),
+                 'current': slice(65, 67), 'ir': slice(74, 81)}
+FLAG_COLUMNS = {'ir': 81, 'scan': 82, 'floor': 83, 'odom': 84, 'wheels': 85, 'current': 86}
+
+
+def present(steps: dict) -> dict:
+    """Where each sensor's readings are real: name -> (n, 1) float32, 1 if real. A missing scan is all nan
+    (a real one has no nan: sectors with nothing in range hold the lidar's range_max)."""
+    ok = {
+        'scan': ~np.isnan(steps['scan']).all(axis=1),
+        'floor': np.isfinite(steps['mouse_speed']),
+        'odom': np.isfinite(steps['odom_vel']).all(axis=1),
+        'wheels': np.isfinite(steps['wheel_vels']).all(axis=1),
+        'current': np.isfinite(steps['wheel_current']).all(axis=1),
+        'ir': np.isfinite(ir_readings(steps)).all(axis=1),
+    }
+    return {name: v[:, None].astype(np.float32) for name, v in ok.items()}
 
 
 def step_targets(steps: dict) -> dict:
-    """Each step's readings, as targets: name -> (n, size) float32, in the units the inputs use."""
+    """Each step's readings, as targets: name -> (n, size) float32, in the units the inputs use; 0 where
+    missing (present())."""
+    scan_ok = present(steps)['scan']
     return {
-        'scan': np.nan_to_num(np.clip(steps['scan'], 0, SCAN_CAP), nan=SCAN_CAP) / SCAN_CAP,
+        'scan': scan_ok * np.nan_to_num(np.clip(steps['scan'], 0, SCAN_CAP), nan=SCAN_CAP) / SCAN_CAP,
         'floor': np.nan_to_num(np.clip(steps['mouse_speed'], 0, 1.0))[:, None] / FORWARD_CAP,
-        'odom': steps['odom_vel'] / np.array([FORWARD_CAP, TURN_CAP], np.float32),
-        'wheels': steps['wheel_vels'] / 10.0,  # rad/s; 0.3 m/s is about 8 rad/s
-        'current': steps['wheel_current'] / 1000.0,  # A
+        'odom': np.nan_to_num(steps['odom_vel'] / np.array([FORWARD_CAP, TURN_CAP], np.float32)),
+        'wheels': np.nan_to_num(steps['wheel_vels'] / 10.0),  # rad/s; 0.3 m/s is about 8 rad/s
+        'current': np.nan_to_num(steps['wheel_current'] / 1000.0),  # A
         'bump': steps['bump'].any(axis=1)[:, None].astype(np.float32),
         'slip': steps['slipping'][:, None].astype(np.float32),
         'ir': np.nan_to_num(np.log1p(np.clip(ir_readings(steps), 0, 4000)) / IR_SCALE, nan=0.0).astype(np.float32),
@@ -47,23 +70,20 @@ def ir_readings(steps: dict) -> np.ndarray:
     return np.full((len(steps['t']), 7), np.nan, np.float32)
 
 
-def ir_ok(steps: dict) -> np.ndarray:
-    """(n, 1): 1 where the IR readings were recorded."""
-    return np.isfinite(ir_readings(steps)).all(axis=1)[:, None].astype(np.float32)
-
-
 def actions(steps: dict) -> np.ndarray:
     return (steps['cmd'] / np.array([FORWARD_CAP, TURN_CAP], np.float32)).astype(np.float32)
 
 
 def inputs(steps: dict) -> np.ndarray:
     """What the encoder sees at each step: every target reading, plus wheel stall, the previous drive
-    command, and whether the IR readings are real (0 in sessions recorded without them)."""
+    command, and whether each sensor's readings are real (FLAG_COLUMNS)."""
     t = step_targets(steps)
+    ok = present(steps)
     previous = np.vstack([np.zeros((1, 2), np.float32), actions(steps)[:-1]])
     stall = steps['stall'][:, None].astype(np.float32)
     bump_sides = steps['bump'].astype(np.float32)  # left, centre, right: more than the target's any-bump
-    parts = [t['scan'], t['floor'], t['odom'], t['wheels'], t['current'], bump_sides, t['slip'], stall, previous, t['ir'], ir_ok(steps)]
+    parts = [t['scan'], t['floor'], t['odom'], t['wheels'], t['current'], bump_sides, t['slip'], stall, previous, t['ir'],
+             ok['ir'], ok['scan'], ok['floor'], ok['odom'], ok['wheels'], ok['current']]
     return np.concatenate(parts, axis=1).astype(np.float32)
 
 
@@ -80,7 +100,12 @@ def pose_changes(pose: np.ndarray, idx: np.ndarray) -> np.ndarray:
 
 
 class SessionData:
-    """One converted session's model data, with windows split by time into training and held-out."""
+    """One converted session's model data, with windows split by time: training (the first 80%), val
+    (the next 10%: for picking the best model and when to stop) and test (the last 10%: for reporting
+    how good it is, on driving the choice never saw). The percentages are of the session's scored
+    driving (episodes.scored), not of all its steps: a session can end in a long stretch without
+    scans (or on the dock), and cutting by step count would put its whole held-out part there. The
+    split steps are kept (split, test_split) so the driver holds out the same driving."""
 
     def __init__(self, steps: dict, holdout: float = 0.2, h: int = H):
         self.steps = steps
@@ -88,23 +113,30 @@ class SessionData:
         self.inputs = inputs(steps)
         self.actions = actions(steps)
         self.targets = step_targets(steps)
-        self.masks = {key: ir_ok(steps) for key in MASKS.values()}
+        self.masks = {MASKS[name]: ok for name, ok in present(steps).items()}
         self.pose = steps['pose'].astype(np.float64)
         ok = usable(steps)
         n = len(ok)
         # A window starting at t needs steps t..t+h all usable.
         bad = np.concatenate([[0], np.cumsum(~ok)])
         starts = np.flatnonzero(bad[np.arange(n - h) + h + 1] - bad[np.arange(n - h)] == 0)
-        split = int(n * (1 - holdout))
+        u = np.flatnonzero(scored(steps))
+        if len(u) == 0:  # nothing to hold out
+            split = test_split = end = n
+        else:
+            split, test_split = (int(u[min(int(len(u) * f), len(u) - 1)]) for f in (1 - holdout, 1 - holdout / 2))
+            end = int(u[-1]) + 1  # test ends with the scored driving, like the driver's
+        self.split, self.test_split = split, test_split
         self.train = starts[starts + h < split]
-        self.val = starts[starts >= split]
+        self.val = starts[(starts >= split) & (starts + h < test_split)]
+        self.test = starts[(starts >= test_split) & (starts + h < end)]
 
 
 def mirror_inputs(x: np.ndarray) -> np.ndarray:
     """Encoder inputs (..., d) flipped left to right (see mirror)."""
     x = x.copy()
     # Input layout (inputs()): scan 60, floor 1, odom 2, wheels 2, current 2, bump sides 3, slip, stall, previous 2,
-    # IR 7, IR recorded
+    # IR 7, then the sensors' "real" flags (FLAG_COLUMNS), which don't change in a mirror
     x[..., 0:60] = x[..., 59::-1]
     x[..., 62] = -x[..., 62]  # turn rate
     x[..., 63:65] = x[..., 64:62:-1]  # wheels left <-> right
@@ -135,7 +167,9 @@ def mirror(batch: dict) -> dict:
 
 def raw_batch(data: SessionData, starts: np.ndarray) -> dict:
     """Arrays for windows starting at starts, before standardizing: inputs (B, h+1, d), actions
-    (B, h, 2), each target (B, h+1, size), and pose changes (B, h+1, 3)."""
+    (B, h, 2), each target (B, h+1, size), pose changes (B, h+1, 3), and for each sensor in SENSORS
+    whether the reading is real (<name>_ok) and whether the encoder sees it (<name>_seen: the same,
+    until hide() hides it), each (B, h+1, 1)."""
     idx = starts[:, None] + np.arange(data.h + 1)[None, :]
     batch = {
         'inputs': data.inputs[idx],
@@ -146,7 +180,37 @@ def raw_batch(data: SessionData, starts: np.ndarray) -> dict:
         batch[name] = data.targets[name][idx].astype(np.float32)
     for key, mask in data.masks.items():
         batch[key] = mask[idx]
+    for name in SENSORS:
+        batch[f'{name}_seen'] = batch[MASKS[name]].copy()
     return batch
+
+
+def hidden_sensors(n: int, rng, p: float) -> dict:
+    """For n examples, which sensors to hide in training: each sensor in each example with probability
+    p. Real readings go missing (the lidar's over Wi-Fi, mostly), and hiding them teaches the model to
+    get by on the rest."""
+    return {name: rng.random(n) < p for name in SENSORS}
+
+
+def hide(x: np.ndarray, hidden: dict) -> np.ndarray:
+    """Encoder inputs x (n, ..., d) with the hidden sensors' readings and flags zeroed, as if missing."""
+    x = x.copy()
+    for name, rows in hidden.items():
+        x[rows, ..., INPUT_COLUMNS[name]] = 0.0
+        x[rows, ..., FLAG_COLUMNS[name]] = 0.0
+    return x
+
+
+def hide_in_batch(batch: dict, hidden: dict) -> dict:
+    """A raw window batch with sensors hidden from the encoder for whole windows. The targets stay:
+    the model learns to predict what it can't see."""
+    out = dict(batch)
+    out['inputs'] = hide(batch['inputs'], hidden)
+    for name, rows in hidden.items():
+        seen = batch[f'{name}_seen'].copy()
+        seen[rows] = 0.0
+        out[f'{name}_seen'] = seen
+    return out
 
 
 class Normalizer:
@@ -176,7 +240,11 @@ class Normalizer:
         return out
 
 
-def window_batch(data: SessionData, starts: np.ndarray, norm: Normalizer, mirrored: bool = False) -> dict:
-    """Standardized arrays for windows starting at starts, optionally mirrored left to right."""
+def window_batch(data: SessionData, starts: np.ndarray, norm: Normalizer, mirrored: bool = False,
+                 rng=None, hide_p: float = 0.0) -> dict:
+    """Standardized arrays for windows starting at starts, optionally mirrored left to right, and with
+    sensors hidden at random (hide_p, hidden_sensors)."""
     raw = raw_batch(data, starts)
+    if hide_p > 0:
+        raw = hide_in_batch(raw, hidden_sensors(len(starts), rng, hide_p))
     return norm(mirror(raw) if mirrored else raw)

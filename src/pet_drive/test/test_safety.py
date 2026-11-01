@@ -78,6 +78,14 @@ def test_stops_announce_and_resuming_releases_the_light_ring():
     assert announcement('no command', 'ok') == (None, None)
 
 
+def test_the_start_tone_sounds_like_no_other():
+    from pet_drive.feedback import RESCUE_NOTED, RESUMED, STARTED, STOPS
+    others = [notes for notes, _ in STOPS.values()] + [RESUMED, RESCUE_NOTED]
+    assert all(STARTED != notes for notes in others)
+    # The only single note, and the longest: the stop tones are short beeps or several notes.
+    assert len(STARTED) == 1 and all(len(n) > 1 or n[0][1] < STARTED[0][1] for n in others)
+
+
 def test_rescue_button_beeps_once_per_press():
     from pet_drive.feedback import RESCUE_BUTTON, rescue_pressed
     up, down = [0] * 12, [0] * 12
