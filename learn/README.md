@@ -25,6 +25,7 @@ Each steps file holds one row per step at 10 Hz, aligned on the time the VM rece
 | `odom_vel` | (n, 2) | wheel odometry: forward m/s, turn rad/s |
 | `wheel_vels`, `wheel_current` | (n, 2) | wheel speeds (rad/s) and motor currents (mA), left and right |
 | `mouse_speed`, `mouse_quality` | (n,) | speed over the floor from the optical floor sensor (m/s), and its tracking quality |
+| `ir` | (n, 7) | front infrared proximity readings, left to right (higher is closer); nan in sessions recorded before they were relayed |
 | `slipping`, `stall`, `cliff_or_drop` | (n,) | the base's wheel-slip detection; wheel stall, cliff or wheel drop reported during the step |
 | `bump` | (n, 3) | a bump began during the step: left, centre, right |
 | `kidnapped`, `docked`, `battery` | (n,) | picked up, on the dock, battery fraction |

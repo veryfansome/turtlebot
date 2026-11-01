@@ -54,6 +54,7 @@ What's recorded, and why:
 | `/imu` | Jolts from collisions the bumper misses |
 | `/wheel_status` | Motor currents, which rise when it pushes against something |
 | `/wheel_vels`, `/slip_status` | Actual wheel speeds, and the base's own wheel-slip detection |
+| `/ir_intensity` | The 7 front infrared proximity sensors, at bumper height: things below the lidar's scan plane, like chair legs or toys |
 | `/hazard_detection` | Bumps (only at the moment of contact), cliffs, wheel drops |
 | `/kidnap_status`, `/dock_status`, `/battery_state` | Picked up, docked, battery |
 | `/tf`, `/tf_static`, `/map` | Where it is: SLAM's `map` → `odom` is movement measured by SLAM, not the wheels |

@@ -21,6 +21,10 @@ from pet_learn.steps import bump_side, compose, latest_before, robot_sectors, ya
 RATE = 10.0  # steps per second
 SCAN_SECTORS = 60
 COMMAND_TIMEOUT = 0.5  # a drive command older than this no longer counts (the base stops too)
+# The base's front infrared proximity sensors, left to right (their angles in the robot's TF: 75, 50,
+# 25, 0, -25, -50, -75 degrees), so mirroring left to right reverses them.
+IR_FRAMES = ['ir_intensity_side_left', 'ir_intensity_left', 'ir_intensity_front_left', 'ir_intensity_front_center_left',
+             'ir_intensity_front_center_right', 'ir_intensity_front_right', 'ir_intensity_right']
 HAZARD_TYPES = {'bump': 1, 'cliff': 2, 'stall': 3, 'wheel_drop': 4}
 
 STEP_FIELDS = {
@@ -34,6 +38,7 @@ STEP_FIELDS = {
     'mouse_speed': 'speed over the floor from the optical floor sensor (m/s)',
     'mouse_quality': 'floor sensor surface quality (higher is better tracking)',
     'slipping': "the base's wheel-slip detection",
+    'ir': 'front infrared proximity readings, left to right (IR_FRAMES; higher is closer); nan if not recorded',
     'bump': 'a bump began during this step: left, centre, right',
     'stall': 'the base reported a wheel stall during this step',
     'cliff_or_drop': 'a cliff or wheel drop was reported during this step',
@@ -49,7 +54,7 @@ STEP_FIELDS = {
 def read_session(path: str) -> dict:
     """All the messages the steps are built from, as time-sorted arrays (times in ns)."""
     series = {name: ([], []) for name in (
-        'scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'kidnap', 'dock',
+        'scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
         'battery', 'map_odom', 'odom_base', 'map', 'hazard')}
     meta = {}
     maps = []  # (time, grid, origin, resolution) for each SLAM map
@@ -85,6 +90,12 @@ def read_session(path: str) -> dict:
             add('wheel_status', t, (msg.current_ma_left, msg.current_ma_right))
         elif topic == '/mouse':
             add('mouse', t, (msg.integrated_x, msg.integrated_y, msg.last_squal))
+        elif topic == '/ir_intensity':
+            values = np.full(len(IR_FRAMES), np.nan, dtype=np.float32)
+            for reading in msg.readings:
+                if reading.header.frame_id in IR_FRAMES:
+                    values[IR_FRAMES.index(reading.header.frame_id)] = reading.value
+            add('ir', t, values)
         elif topic == '/slip_status':
             add('slip', t, msg.is_slipping)
         elif topic == '/kidnap_status':
@@ -189,6 +200,7 @@ def build_steps(s: dict) -> dict:
         'wheel_vels': latest('wheel_vels', (0.0, 0.0)).astype(np.float32),
         'wheel_current': latest('wheel_status', (0, 0)).astype(np.float32),
         'slipping': latest('slip', False).astype(bool),
+        'ir': latest('ir', np.full(len(IR_FRAMES), np.nan, dtype=np.float32)).astype(np.float32),
         'kidnapped': latest('kidnap', False).astype(bool),
         'docked': latest('dock', False).astype(bool),
         'battery': latest('battery', np.nan).astype(np.float32),
