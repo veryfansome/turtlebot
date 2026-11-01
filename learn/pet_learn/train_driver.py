@@ -11,7 +11,8 @@ on goals in the held-out last 20% of each session:
   (rank correlation; IQL aims above the recorded driving, so agreement in order is what counts);
 - policy: what it does with the goal placed ahead, to the sides, back-left, back-right and straight
   behind real held-out states with open space ahead: it should drive forward, and turn toward the
-  others (straight behind, either way is as good, so a mirrored policy may turn neither way).
+  others. Straight behind, either way is as good, and the policy is symmetric, so in a symmetric
+  situation it can't pick one: real situations are rarely symmetric.
 """
 import argparse
 import copy
@@ -36,8 +37,16 @@ BEHIND = np.radians(120)  # a goal at a bearing beyond this is behind the robot
 REVERSE_CAP = 0.15 / 0.3  # the safety layer's reverse limit, in the action's units (forward is scaled by 0.3 m/s)
 
 
+GOAL_MIRROR = torch.tensor([1.0, -1.0, 1.0, -1.0, 1.0])  # goal features flipped left to right (mirror_goal)
+ACTION_MIRROR = torch.tensor([1.0, -1.0])  # forward stays, turn changes sign
+
+
 class Driver(nn.Module):
-    """Values and policy on the world model's state z, for a goal g (goals.goal_features)."""
+    """Values and policy for a goal g (goals.goal_features), on a pair of world-model states s = (z, zm):
+    the situation and its mirror image (encode_pair). Symmetric by construction: each output averages
+    the networks' answer for the situation and, flipped back, for its mirror image. Driving is the same
+    left and right, and this way the policy can't come to favour turning one way, whatever the data or
+    the training noise."""
 
     def __init__(self, z_dim: int, hidden: int = 256):
         super().__init__()
@@ -47,16 +56,29 @@ class Driver(nn.Module):
         self.actor = mlp([z_dim + GOAL_DIM, hidden, hidden, ACTION_DIM])
         self.log_std = nn.Parameter(torch.full((ACTION_DIM,), -1.0))
 
-    def q(self, z, g, a):
-        x = torch.cat([z, g, a], dim=-1)
-        return self.q1(x).squeeze(-1), self.q2(x).squeeze(-1)
+    def q(self, s, g, a):
+        x = torch.cat([s[0], g, a], dim=-1)
+        xm = torch.cat([s[1], g * GOAL_MIRROR, a * ACTION_MIRROR], dim=-1)
+        return ((self.q1(x) + self.q1(xm)) / 2).squeeze(-1), ((self.q2(x) + self.q2(xm)) / 2).squeeze(-1)
 
-    def value(self, z, g):
-        return self.v(torch.cat([z, g], dim=-1)).squeeze(-1)
+    def value(self, s, g):
+        return ((self.v(torch.cat([s[0], g], dim=-1)) + self.v(torch.cat([s[1], g * GOAL_MIRROR], dim=-1))) / 2).squeeze(-1)
 
-    def policy(self, z, g):
+    def policy(self, s, g):
         """Mean action (scaled by the safety layer's caps, within -1..1) and its spread."""
-        return torch.tanh(self.actor(torch.cat([z, g], dim=-1))), self.log_std.exp()
+        own = self.actor(torch.cat([s[0], g], dim=-1))
+        mirrored = self.actor(torch.cat([s[1], g * GOAL_MIRROR], dim=-1)) * ACTION_MIRROR
+        return torch.tanh((own + mirrored) / 2), self.log_std.exp()
+
+
+def encode_pair(world, x, input_mirror):
+    """The world model's states for inputs x and for their mirror image (x @ input_mirror)."""
+    return world.encode(x), world.encode(x @ input_mirror)
+
+
+def input_mirror(dim: int) -> torch.Tensor:
+    """mirror_inputs as a matrix: it only reorders inputs and flips signs, so x @ this mirrors x."""
+    return torch.as_tensor(mirror_inputs(np.eye(dim, dtype=np.float32)))
 
 
 def mirror_goal(g):
@@ -120,7 +142,9 @@ def main():
     opt = torch.optim.AdamW(list(world.parameters()) + list(driver.parameters()), lr=args.lr, weight_decay=1e-3)
     windows = [(i, s) for i, d in enumerate(sessions) for s in d.train]
 
-    def transition_batch(trs, idx_by_session, mirrored):
+    mirror_x = input_mirror(ckpt['input_dim'])
+
+    def transition_batch(trs, idx_by_session):
         x0, x1, a, g0, g1, r, d, hs = [], [], [], [], [], [], [], []
         for i, idx in idx_by_session.items():
             t, data = trs[i], sessions[i]
@@ -128,12 +152,7 @@ def main():
             x0.append(data.inputs[k]); x1.append(data.inputs[k + 1]); a.append(data.actions[k])
             g0.append(t.goal[idx]); g1.append(t.next_goal[idx]); r.append(t.reward[idx]); d.append(t.done[idx])
             hs.append(t.hindsight[idx].astype(np.float32))
-        b = [np.concatenate(v) for v in (x0, x1, a, g0, g1, r, d, hs)]
-        if mirrored:
-            b[0], b[1] = mirror_inputs(b[0]), mirror_inputs(b[1])
-            b[2] = b[2] * np.array([1, -1], np.float32)
-            b[3], b[4] = mirror_goal(b[3]), mirror_goal(b[4])
-        return [torch.as_tensor(v) for v in b]
+        return [torch.as_tensor(np.concatenate(v)) for v in (x0, x1, a, g0, g1, r, d, hs)]
 
     def sample(trs, n):
         sizes = np.array([len(t.step) for t in trs])
@@ -151,19 +170,20 @@ def main():
                  for i, st in by_session.items() for m, st in enumerate(np.array_split(np.array(st), 2)) if len(st)]
         wloss, _ = world_loss(world, to_torch({k: np.concatenate([p[k] for p in parts]) for k in parts[0]}, 'cpu'))
 
-        # IQL.
-        x0, x1, a, g0, g1, r, d, hs = transition_batch(train_tr, sample(train_tr, args.batch), mirrored=it % 2 == 0)
-        z0 = world.encode(x0)
+        # IQL (no need to mirror batches: the Driver is symmetric by construction).
+        x0, x1, a, g0, g1, r, d, hs = transition_batch(train_tr, sample(train_tr, args.batch))
+        s0 = encode_pair(world, x0, mirror_x)
+        s0_fixed = tuple(z.detach() for z in s0)
         with torch.no_grad():
-            z1 = world.encode(x1)
-            tq1, tq2 = target_q.q(z0, g0, a)
-            target_v = driver.value(z1, g1)
-        v = driver.value(z0.detach(), g0)
+            s1 = encode_pair(world, x1, mirror_x)
+            tq1, tq2 = target_q.q(s0, g0, a)
+            target_v = driver.value(s1, g1)
+        v = driver.value(s0_fixed, g0)
         v_loss = expectile(torch.min(tq1, tq2) - v, args.tau)
-        q1, q2 = driver.q(z0, g0, a)
+        q1, q2 = driver.q(s0, g0, a)
         q_target = args.reward_scale * r + args.gamma * (1 - d) * target_v
         q_loss = F.mse_loss(q1, q_target) + F.mse_loss(q2, q_target)
-        mean, std = driver.policy(z0.detach(), g0)
+        mean, std = driver.policy(s0_fixed, g0)
         with torch.no_grad():
             weight = torch.clamp(torch.exp(args.beta * (torch.min(tq1, tq2) - v)), max=100.0)
         # The policy learns the recorded commands within the safety layer's limits (the controller's turbo
@@ -193,30 +213,32 @@ def main():
     with torch.no_grad():
         values, returns = [], []
         for i, t in enumerate(val_tr):
-            z = world.encode(torch.as_tensor(sessions[i].inputs[t.step]))
-            values.append(driver.value(z, torch.as_tensor(t.goal)).numpy())
+            s = encode_pair(world, torch.as_tensor(sessions[i].inputs[t.step]), mirror_x)
+            values.append(driver.value(s, torch.as_tensor(t.goal)).numpy())
             returns.append(t.ret)
         values, returns = np.concatenate(values), np.concatenate(returns)
         print(f'\nheld-out values: rank correlation with the recorded return {spearman(values, returns):.2f} '
               f'({len(values)} transitions)')
 
-        # Policy probes: real held-out states with open space ahead, goal 2 m away in four directions.
-        print('policy, goal 2 m away (forward m/s, turn rad/s; turn > 0 is left), median over held-out states with 1.5 m clear ahead:')
-        for i, data in enumerate(sessions):
+        # Policy probes: real held-out states with open space ahead, from every session, goal 2 m away.
+        x = []
+        for data in sessions:
             open_ahead = np.flatnonzero((data.inputs[:, 27:33].min(axis=1) * 4.0 > 1.5))
-            open_ahead = open_ahead[open_ahead >= int(len(data.inputs) * 0.8)]
-            if len(open_ahead) == 0:
-                continue
-            z = world.encode(torch.as_tensor(data.inputs[open_ahead]))
-            zero = np.zeros((len(open_ahead), 3))
-            for name, deg in [('ahead', 0), ('left', 90), ('right', -90), ('back-left', 150), ('back-right', -150),
-                              ('behind', 180)]:
-                goal = (2 * np.cos(np.radians(deg)), 2 * np.sin(np.radians(deg)), np.radians(deg))
-                g = torch.as_tensor(goal_features(zero, goal))
-                mean, _ = driver.policy(z, g)
-                fwd, turn = np.median(mean.numpy(), axis=0) * np.array([0.3, 1.5])
-                print(f'  {name:10s} forward {fwd:+.2f}, turn {turn:+.2f}   ({len(open_ahead)} states)')
-            break
+            x.append(data.inputs[open_ahead[open_ahead >= int(len(data.inputs) * 0.8)]])
+        x = torch.as_tensor(np.concatenate(x))
+        # Each state and its mirror image, so the probes aren't swayed by which side happened to have
+        # more room (the policy turns toward open space).
+        x = torch.cat([x, x @ mirror_x])
+        s = encode_pair(world, x, mirror_x)
+        zero = np.zeros((len(x), 3))
+        print(f'policy, goal 2 m away (forward m/s, turn rad/s; turn > 0 is left), median over {len(x)} held-out '
+              'states with 1.5 m clear ahead and their mirror images:')
+        for name, deg in [('ahead', 0), ('left', 90), ('right', -90), ('back-left', 150), ('back-right', -150),
+                          ('behind', 180)]:
+            goal = (2 * np.cos(np.radians(deg)), 2 * np.sin(np.radians(deg)), np.radians(deg))
+            mean, _ = driver.policy(s, torch.as_tensor(goal_features(zero, goal)))
+            fwd, turn = np.median(mean.numpy(), axis=0) * np.array([0.3, 1.5])
+            print(f'  {name:10s} forward {fwd:+.2f}, turn {turn:+.2f}')
 
     os.makedirs(os.path.join(data_dir, 'models'), exist_ok=True)
     out = os.path.join(data_dir, 'models', f'driver-{time.strftime("%Y%m%d-%H%M%S")}.pt')
