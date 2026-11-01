@@ -7,8 +7,8 @@ This follows established designs: auxiliary prediction tasks for learning faster
 ```
 readings now ──► encoder ──► state z ──┬─► dynamics(z, action) ──► next z ──► next z ...
 (lidar 60 sectors, floor speed,        │        └─► heads: next lidar, floor speed, wheel speeds,
- wheel speeds, currents, bump, slip,   │                   currents, bump, slip, pose change
- last command)                         │
+ wheel speeds, currents, bump, slip,   │                   currents, bump, slip, IR, pose change
+ IR, last command)                     │
                                        ├─► value V(z, goal), Q(z, goal, action)   (IQL, reward-trained)
 goal relative to the robot ────────────┴─► policy π(action | z, goal)
 ```
@@ -20,17 +20,18 @@ Each step (10 Hz) the encoder sees, scaled to similar ranges:
 - the lidar, nearest return in each of 60 sectors, capped at 4 m;
 - speed over the floor (optical floor sensor), wheel odometry (forward and turn), wheel speeds, motor currents;
 - whether a bump began, wheel slip, wheel stall;
+- the 7 front IR proximity sensors, as log(1 + reading): they only see the last 10-15 cm and jump steeply up close (see the [roadmap](../ROADMAP.md)), plus whether they were recorded (sessions from before they were relayed have none);
 - the previous drive command (commands take 0.1–0.2 s to show up in the sensors).
 
 The action is the drive command: forward speed and turn rate, scaled by the safety layer's caps (0.3 m/s, 1.5 rad/s).
 
-The world model predicts, for each of the next H steps (H = 10, one second), by chaining the dynamics on the commands actually sent: the lidar sectors, floor speed, wheel odometry, wheel speeds, motor currents, whether a bump begins, whether the wheels slip, and how the robot's pose changed (SLAM, in the robot's frame at the start). Predicting a second ahead rather than one step matters: at 10 Hz the next scan is nearly the current one, so a one-step model can get away with copying.
+The world model predicts, for each of the next H steps (H = 10, one second), by chaining the dynamics on the commands actually sent: the lidar sectors, floor speed, wheel odometry, wheel speeds, motor currents, whether a bump begins, whether the wheels slip, the IR readings, and how the robot's pose changed (SLAM, in the robot's frame at the start). Predicting a second ahead rather than one step matters: at 10 Hz the next scan is nearly the current one, so a one-step model can get away with copying.
 
 ## Training
 
 One loop, one combined loss:
 
-- **World model**: prediction error of every head at every horizon. Each continuous target is standardized (zero mean, unit spread, from the training data) so no head dominates; bump and slip are on/off targets with a classification loss. A small consistency term keeps the predicted state close to what the encoder makes of the real next readings (as in SPR and TD-MPC2).
+- **World model**: prediction error of every head at every horizon. Each continuous target is standardized (zero mean, unit spread, from the training data) so no head dominates; bump and slip are on/off targets with a classification loss. The IR head only counts where the readings were recorded. A small consistency term keeps the predicted state close to what the encoder makes of the real next readings (as in SPR and TD-MPC2).
 - **Values**: IQL's Q and V on top of the state, with goals from hindsight relabeling and the goal-reaching reward ([pet_learn/reward.py](pet_learn/reward.py)). The world model doesn't see goals: physics doesn't depend on where you're going, so it learns from every step.
 - **Policy**: advantage-weighted regression (IQL's policy step): it imitates the recorded commands more the better the values say they turned out. Its gradients don't flow into the shared encoder, so the policy can't bend the state to flatter itself.
 
@@ -54,4 +55,3 @@ First results, from one 8½-minute session (2026-10-31), on its held-out last 20
 
 - Prediction error is a surprise signal: stage 6 of the [roadmap](../ROADMAP.md) starts from this model; camera features become another head.
 - With a dynamics model, the robot can also plan: try candidate command sequences in the model and pick the best by reward and value (TD-MPC2's approach).
-- The front IR proximity sensors become another input and head.

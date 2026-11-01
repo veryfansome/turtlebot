@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from pet_learn.dataset import TARGETS
+from pet_learn.dataset import MASKS, TARGETS
 
 
 def mlp(sizes, out_norm=False):
@@ -66,6 +66,9 @@ def world_loss(model: WorldModel, batch: dict, bump_weight: float = 10.0, consis
         if binary:
             weight = torch.where(target > 0.5, bump_weight, 1.0) if name == 'bump' else None
             parts[name] = F.binary_cross_entropy_with_logits(preds[name], target, weight=weight)
+        elif name in MASKS:  # only where the reading was recorded
+            mask = batch[MASKS[name]]
+            parts[name] = (((preds[name] - target) ** 2) * mask).sum() / (mask.sum() * size).clamp(min=1.0)
         else:
             parts[name] = F.mse_loss(preds[name], target)
     pose = model.pose(zs[:, :1], zs[:, 1:])

@@ -8,6 +8,7 @@ FORWARD_CAP, TURN_CAP = 0.3, 1.5  # the safety layer's caps (m/s, rad/s): action
 SCAN_CAP = 4.0  # lidar sectors are capped at this (m): beyond it, distance matters little for driving
 H = 10  # steps ahead to predict (1 s at 10 Hz)
 POSE_SCALE = (0.3, 0.3, 1.0)  # pose change targets (m, m, rad) are divided by these: about 1 s of driving
+IR_SCALE = np.log1p(1000.0)  # IR readings go in as log(1 + reading) / this: 0-5 is nothing near, ~500 a hand at 5 cm
 
 # Prediction targets: name -> (size, binary?)
 TARGETS = {
@@ -18,7 +19,11 @@ TARGETS = {
     'current': (2, False),
     'bump': (1, True),
     'slip': (1, True),
+    'ir': (7, False),
 }
+# Targets missing in some steps (sessions recorded before the IR sensors were relayed): name -> the
+# batch key of a (n, 1) mask that is 1 where the target is real. Missing values are stored as 0.
+MASKS = {'ir': 'ir_ok'}
 
 
 def step_targets(steps: dict) -> dict:
@@ -31,7 +36,20 @@ def step_targets(steps: dict) -> dict:
         'current': steps['wheel_current'] / 1000.0,  # A
         'bump': steps['bump'].any(axis=1)[:, None].astype(np.float32),
         'slip': steps['slipping'][:, None].astype(np.float32),
+        'ir': np.nan_to_num(np.log1p(np.clip(ir_readings(steps), 0, 4000)) / IR_SCALE, nan=0.0).astype(np.float32),
     }
+
+
+def ir_readings(steps: dict) -> np.ndarray:
+    """(n, 7) IR readings, left to right; nan where not recorded."""
+    if 'ir' in steps:
+        return steps['ir']
+    return np.full((len(steps['t']), 7), np.nan, np.float32)
+
+
+def ir_ok(steps: dict) -> np.ndarray:
+    """(n, 1): 1 where the IR readings were recorded."""
+    return np.isfinite(ir_readings(steps)).all(axis=1)[:, None].astype(np.float32)
 
 
 def actions(steps: dict) -> np.ndarray:
@@ -39,13 +57,13 @@ def actions(steps: dict) -> np.ndarray:
 
 
 def inputs(steps: dict) -> np.ndarray:
-    """What the encoder sees at each step: every target reading, plus wheel stall and the previous
-    drive command."""
+    """What the encoder sees at each step: every target reading, plus wheel stall, the previous drive
+    command, and whether the IR readings are real (0 in sessions recorded without them)."""
     t = step_targets(steps)
     previous = np.vstack([np.zeros((1, 2), np.float32), actions(steps)[:-1]])
     stall = steps['stall'][:, None].astype(np.float32)
     bump_sides = steps['bump'].astype(np.float32)  # left, centre, right: more than the target's any-bump
-    parts = [t['scan'], t['floor'], t['odom'], t['wheels'], t['current'], bump_sides, t['slip'], stall, previous]
+    parts = [t['scan'], t['floor'], t['odom'], t['wheels'], t['current'], bump_sides, t['slip'], stall, previous, t['ir'], ir_ok(steps)]
     return np.concatenate(parts, axis=1).astype(np.float32)
 
 
@@ -70,6 +88,7 @@ class SessionData:
         self.inputs = inputs(steps)
         self.actions = actions(steps)
         self.targets = step_targets(steps)
+        self.masks = {key: ir_ok(steps) for key in MASKS.values()}
         self.pose = steps['pose'].astype(np.float64)
         ok = usable(steps)
         n = len(ok)
@@ -84,13 +103,15 @@ class SessionData:
 def mirror_inputs(x: np.ndarray) -> np.ndarray:
     """Encoder inputs (..., d) flipped left to right (see mirror)."""
     x = x.copy()
-    # Input layout (inputs()): scan 60, floor 1, odom 2, wheels 2, current 2, bump sides 3, slip, stall, previous 2
+    # Input layout (inputs()): scan 60, floor 1, odom 2, wheels 2, current 2, bump sides 3, slip, stall, previous 2,
+    # IR 7, IR recorded
     x[..., 0:60] = x[..., 59::-1]
     x[..., 62] = -x[..., 62]  # turn rate
     x[..., 63:65] = x[..., 64:62:-1]  # wheels left <-> right
     x[..., 65:67] = x[..., 66:64:-1]  # currents
     x[..., 67:70] = x[..., 69:66:-1]  # bump left <-> right
     x[..., 73] = -x[..., 73]  # previous turn command
+    x[..., 74:81] = x[..., 80:73:-1]  # IR: the sensors' angles are symmetric about straight ahead
     return x
 
 
@@ -108,6 +129,7 @@ def mirror(batch: dict) -> dict:
     out['wheels'] = batch['wheels'][..., ::-1].copy()
     out['current'] = batch['current'][..., ::-1].copy()
     out['pose'] = batch['pose'] * np.array([1, -1, -1], np.float32)
+    out['ir'] = batch['ir'][..., ::-1].copy()
     return out
 
 
@@ -122,6 +144,8 @@ def raw_batch(data: SessionData, starts: np.ndarray) -> dict:
     }
     for name in TARGETS:
         batch[name] = data.targets[name][idx].astype(np.float32)
+    for key, mask in data.masks.items():
+        batch[key] = mask[idx]
     return batch
 
 
@@ -137,6 +161,11 @@ class Normalizer:
             if binary:
                 continue
             values = np.concatenate([r[name].reshape(-1, size) for r in raws])
+            if name in MASKS:
+                values = values[np.concatenate([r[MASKS[name]].reshape(-1) for r in raws]) > 0.5]
+            if len(values) == 0:  # no session has this reading yet
+                self.mean[name], self.std[name] = np.zeros(size, np.float32), np.ones(size, np.float32)
+                continue
             self.mean[name] = values.mean(axis=0).astype(np.float32)
             self.std[name] = np.maximum(values.std(axis=0), 1e-3).astype(np.float32)
 

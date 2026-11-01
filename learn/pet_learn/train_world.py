@@ -15,7 +15,7 @@ import time
 import numpy as np
 import torch
 
-from pet_learn.dataset import POSE_SCALE, TARGETS, Normalizer, SessionData, window_batch
+from pet_learn.dataset import MASKS, POSE_SCALE, TARGETS, Normalizer, SessionData, window_batch
 from pet_learn.model import WorldModel, world_loss
 
 HORIZONS = (1, 5, 10)
@@ -74,11 +74,14 @@ def evaluate(model, sessions, norm, device):
         for name, (size, binary) in list(TARGETS.items()) + [('pose', (3, False))]:
             target = batch[name]
             for h in HORIZONS:
+                keep = batch[MASKS[name]][:, h, 0] > 0.5 if name in MASKS else slice(None)
                 if binary:
                     model_err, base_err = auc(preds[name][:, h, 0], target[:, h, 0]), 0.5
+                elif not np.any(keep):  # not recorded in the held-out driving
+                    model_err, base_err = float('nan'), float('nan')
                 else:
-                    model_err = float(((preds[name][:, h] - target[:, h]) ** 2).mean())
-                    base_err = float(((base[name][:, h] - target[:, h]) ** 2).mean())
+                    model_err = float(((preds[name][keep, h] - target[keep, h]) ** 2).mean())
+                    base_err = float(((base[name][keep, h] - target[keep, h]) ** 2).mean())
                 rows[(name, h)] = (model_err, base_err)
     model.train()
     return rows
@@ -129,7 +132,7 @@ def main():
         if it % args.eval_every == 0:
             rows = evaluate(model, sessions, norm, args.device)
             # Held-out error, relative to the baselines, averaged over continuous heads and horizons.
-            val = float(np.mean([rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9) for n in continuous for h in HORIZONS]))
+            val = float(np.nanmean([rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9) for n in continuous for h in HORIZONS]))
             if val < best:
                 best, best_state, best_it = val, {k: v.clone() for k, v in model.state_dict().items()}, it
             if it % (args.eval_every * 5) == 0:
