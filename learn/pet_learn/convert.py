@@ -23,6 +23,7 @@ SCAN_SECTORS = 60
 COMMAND_TIMEOUT = 0.5  # a drive command older than this no longer counts (the base stops too)
 # The base's front infrared proximity sensors, left to right (their angles in the robot's TF: 75, 50,
 # 25, 0, -25, -50, -75 degrees), so mirroring left to right reverses them.
+# Left to right: 75°, 50°, 25° left, straight ahead (front_center_left), 25°, 50°, 75° right (from the base's TF).
 IR_FRAMES = ['ir_intensity_side_left', 'ir_intensity_left', 'ir_intensity_front_left', 'ir_intensity_front_center_left',
              'ir_intensity_front_center_right', 'ir_intensity_front_right', 'ir_intensity_right']
 HAZARD_TYPES = {'bump': 1, 'cliff': 2, 'stall': 3, 'wheel_drop': 4}
