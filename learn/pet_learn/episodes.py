@@ -10,12 +10,17 @@ import math
 import numpy as np
 
 from pet_learn.geodesic import DistanceField
-from pet_learn.reward import RewardParams, arrived, episode_rewards, heading_error
+from pet_learn.reward import RewardParams, arrived, episode_rewards, heading_error, motor_current
 
 MAX_STEP = 0.1  # m per 0.1 s step; more is a SLAM correction or reset, not driving (top speed 0.03)
 STUCK_FORWARD = 0.03  # told to go forward faster than this (m/s) ...
 STUCK_FLOOR = 0.01  # ... while the floor sensor says slower than this: pushing without moving
 RESCUE_HANDLING_S = 10.0  # after a rescue press, a person is handling the robot until it's set down, or this long
+# Without scans, SLAM can't correct the pose, which then follows the wheel odometry alone: it drifts,
+# so steps this long after the latest scan aren't used ...
+SCAN_GAP_LIMIT_S = 60.0
+# ... and goals and rewards, which measure distances on the map, use only steps this close to one.
+SCORED_SCAN_GAP_S = 10.0
 
 
 @dataclass
@@ -38,13 +43,22 @@ class Episode:
         return self.shortest / max(self.path, self.shortest) if self.success else 0.0
 
 
-def usable(steps: dict) -> np.ndarray:
-    """Steps an episode can include: SLAM has a pose, the robot is driving on the floor (not docked
-    or picked up, not being rescued), and the pose didn't jump (a SLAM reset or big correction)."""
+def usable(steps: dict, max_scan_gap: float = SCAN_GAP_LIMIT_S) -> np.ndarray:
+    """Steps the model can learn from: SLAM has a pose (and a scan in the last max_scan_gap s), the
+    robot is driving on the floor (not docked or picked up, not being rescued), and the pose didn't
+    jump (a SLAM reset or big correction)."""
     pose = steps['pose']
     ok = np.isfinite(pose).all(axis=1) & ~steps['docked'] & ~steps['kidnapped'] & ~rescue_handling(steps)
+    if 'scan_age' in steps:  # sessions converted before it was recorded had no gaps kept
+        ok &= steps['scan_age'] <= max_scan_gap
     jump = np.hypot(*np.diff(pose[:, :2], axis=0, prepend=pose[:1, :2]).T)
     return ok & ~(jump > MAX_STEP)
+
+
+def scored(steps: dict) -> np.ndarray:
+    """Steps an episode can include, scored with the reward: usable, and with a scan in the last
+    SCORED_SCAN_GAP_S, so the pose they're measured on is still close to the map."""
+    return usable(steps, SCORED_SCAN_GAP_S)
 
 
 def rescue_handling(steps: dict) -> np.ndarray:
@@ -77,7 +91,7 @@ def evaluate(steps: dict, maps, start: int, last: int, goal, p: RewardParams = R
     pose = steps['pose']
     dists = [field.at(pose[k, :2]) for k in span]
     errs = [heading_error(pose[k, 2], goal[2]) for k in span]
-    currents = np.abs(steps['wheel_current'][start:last + 1]).sum(axis=1) / 1000.0
+    currents = motor_current(steps)[start:last + 1]
     rewards, arrived_at = episode_rewards(dists, errs, currents, dt, p)
     end = start + (arrived_at if arrived_at is not None else len(dists) - 1)
     moved = np.hypot(*np.diff(pose[start:end + 1, :2], axis=0).T)
@@ -100,7 +114,7 @@ def hindsight_episodes(steps: dict, maps, n: int, rng: np.random.Generator, min_
     goals closer than min_dist (straight line) are skipped. Arrival is checked against the goal, so
     an episode can end early if the robot passed through the goal pose on the way."""
     rate = float(steps['rate'])
-    ok = usable(steps)
+    ok = scored(steps)
     # Each step's usable stretch: the index where it ends.
     run_end = np.full(len(ok), -1)
     end = -1

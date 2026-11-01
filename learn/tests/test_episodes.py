@@ -55,6 +55,28 @@ def test_pose_jumps_and_pickups_are_not_usable():
     assert usable(steps).tolist() == [True, True, False, False]
 
 
+def test_steps_long_after_the_last_scan_are_not_usable():
+    from pet_learn.episodes import scored
+    steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(5)])
+    steps['scan_age'] = np.array([0.1, 10.0, 30.0, 60.0, 61.0], np.float32)
+    assert usable(steps).tolist() == [True, True, True, True, False]
+    assert scored(steps).tolist() == [True, True, False, False, False]  # goals and rewards: a recent scan
+
+
+def test_a_missing_motor_current_doesnt_make_rewards_nan():
+    from pet_learn.goals import relabel
+    from pet_learn.reward import motor_current
+    steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(100)])
+    steps['wheel_current'][40:45] = np.nan  # its messages stopped for half a second
+    steps['wheel_current'][0] = np.nan  # and none yet at the start
+    current = motor_current(steps)
+    assert np.isfinite(current).all() and current[0] == 0.0 and np.allclose(current[40:45], 0.2)
+    tr = relabel(steps, OPEN, np.ones(100, bool), 0, 100, 30, np.random.default_rng(0))
+    assert len(tr.reward) and np.isfinite(tr.reward).all()
+    episode = evaluate(steps, OPEN, 30, 60, (1.5, 1.5, 0.0))
+    assert np.isfinite(episode.reward) and np.isfinite(episode.energy)
+
+
 def test_hindsight_episodes_stay_within_usable_steps():
     steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(200)])
     steps['kidnapped'][100:110] = True
@@ -88,3 +110,10 @@ def test_episodes_that_run_into_a_rescue_end_as_failures():
     assert last.any() and t.done[last].all()
     assert (t.reward[last] < -RewardParams().rescue_penalty + 0.5).all()
     assert (t.step < 150).all()
+
+
+def test_a_stretch_with_nothing_to_score_gives_no_transitions():
+    from pet_learn.goals import relabel
+    steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(50)])
+    tr = relabel(steps, OPEN, np.zeros(50, bool), 0, 50, 10, np.random.default_rng(0))
+    assert len(tr.step) == 0 and tr.goal.shape == (0, 5)

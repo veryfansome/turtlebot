@@ -44,6 +44,15 @@ def arrived(dist: float, heading_err: float, p: RewardParams) -> bool:
     return dist <= p.goal_radius and abs(heading_err) <= p.goal_heading
 
 
+def motor_current(steps: dict) -> np.ndarray:
+    """Each step's total motor current, both wheels (A), for the energy cost. A missing reading (its
+    messages stopped for a moment) carries the last real one forward; before any, 0."""
+    total = np.abs(steps['wheel_current']).sum(axis=1) / 1000.0
+    real = np.isfinite(total)
+    last = np.maximum.accumulate(np.where(real, np.arange(len(total)), -1))
+    return np.where(last >= 0, total[np.maximum(last, 0)], 0.0)
+
+
 def episode_rewards(dists, heading_errs, currents_a, dt: float, p: RewardParams = RewardParams()):
     """Rewards for an episode's steps, given each step's shortest-path distance to the goal, heading
     error, and total motor current (A). rewards[k] is for the move from step k to step k+1, so there

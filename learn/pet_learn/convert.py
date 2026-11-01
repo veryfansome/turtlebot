@@ -21,6 +21,7 @@ from pet_learn.steps import bump_side, compose, latest_before, robot_sectors, ya
 RATE = 10.0  # steps per second
 SCAN_SECTORS = 60
 COMMAND_TIMEOUT = 0.5  # a drive command older than this no longer counts (the base stops too)
+SENSOR_MAX_AGE = 0.5  # a sensor reading older than this is missing (nan): its messages stopped arriving
 # The base's front infrared proximity sensors, left to right (their angles in the robot's TF: 75, 50,
 # 25, 0, -25, -50, -75 degrees), so mirroring left to right reverses them.
 # Left to right: 75°, 50°, 25° left, straight ahead (front_center_left), 25°, 50°, 75° right (from the base's TF).
@@ -31,24 +32,25 @@ HAZARD_TYPES = {'bump': 1, 'cliff': 2, 'stall': 3, 'wheel_drop': 4}
 
 STEP_FIELDS = {
     't': 'seconds since the first scan',
-    'scan': f'lidar, nearest return in each of {SCAN_SECTORS} equal sectors of the robot frame (m): sector 0 starts directly behind (-180 degrees), counterclockwise, straight ahead between sectors {SCAN_SECTORS // 2 - 1} and {SCAN_SECTORS // 2}',
+    'scan': f'lidar, nearest return in each of {SCAN_SECTORS} equal sectors of the robot frame (m): sector 0 starts directly behind (-180 degrees), counterclockwise, straight ahead between sectors {SCAN_SECTORS // 2 - 1} and {SCAN_SECTORS // 2}; range_max where nothing returned (or closer than the robot\'s own support posts); all nan when the scan is missing (scan_age)',
+    'scan_age': f'seconds since the latest scan arrived; the scan is missing when this is over {SENSOR_MAX_AGE} s',
     'cmd': 'drive command the wheels were told: forward m/s, turn rad/s (0 if none in the last 0.5 s)',
     'joy_active': 'a controller button (the enable button, while driving) was held: a person was driving',
     'rescue': 'the rescue button (Y) was pressed during this step: the robot was stuck and a person is about to free it',
-    'odom_vel': 'wheel odometry: forward m/s, turn rad/s',
-    'wheel_vels': 'wheel speeds: left, right (rad/s)',
-    'wheel_current': 'motor currents: left, right (mA)',
-    'mouse_speed': 'speed over the floor from the optical floor sensor (m/s)',
-    'mouse_quality': 'floor sensor surface quality (higher is better tracking)',
+    'odom_vel': 'wheel odometry: forward m/s, turn rad/s; nan when missing',
+    'wheel_vels': 'wheel speeds: left, right (rad/s); nan when missing',
+    'wheel_current': 'motor currents: left, right (mA); nan when missing',
+    'mouse_speed': 'speed over the floor from the optical floor sensor (m/s); nan when missing',
+    'mouse_quality': 'floor sensor surface quality (higher is better tracking); nan when missing',
     'slipping': "the base's wheel-slip detection",
-    'ir': 'front infrared proximity readings, left to right (IR_FRAMES; higher is closer); nan if not recorded',
+    'ir': 'front infrared proximity readings, left to right (IR_FRAMES; higher is closer); nan when missing or not recorded',
     'bump': 'a bump began during this step: left, centre, right',
     'stall': 'the base reported a wheel stall during this step',
     'cliff_or_drop': 'a cliff or wheel drop was reported during this step',
     'kidnapped': 'picked up',
     'docked': 'on the dock',
     'battery': 'battery fraction',
-    'pose': 'SLAM pose in the map: x, y (m), yaw (rad); nan before SLAM has one',
+    'pose': "SLAM pose in the map: x, y (m), yaw (rad); nan before SLAM has one. While scans are missing, SLAM's last correction carries on with the wheel odometry",
     'known_cells': 'mapped cells (free or occupied) in the latest SLAM map',
     'new_cells': 'cells that became mapped during this step (0 when the map shrank, e.g. after a SLAM reset)',
 }
@@ -174,7 +176,10 @@ def build_steps(s: dict) -> dict:
     scan_times = s['scan'][0]
     if len(scan_times) == 0:
         raise ValueError('no lidar scans in this session')
-    start, end = scan_times[0], scan_times[-1]
+    # From the first scan to the last odometry: scans can stop arriving before the rest (Wi-Fi drops
+    # big messages first), and those steps are kept, with the scan marked missing.
+    odom_times = s['odom'][0]
+    start, end = scan_times[0], max(scan_times[-1], odom_times[-1] if len(odom_times) else 0)
     step_ns = int(1e9 / RATE)
     grid = np.arange(start, end + 1, step_ns, dtype=np.int64)
     n = len(grid)
@@ -199,16 +204,19 @@ def build_steps(s: dict) -> dict:
                 hit[i] = True
         return hit
 
+    last_scan = latest_before(scan_times, grid)
+    nan2 = (np.nan, np.nan)
     steps = {
         't': (grid - start) / 1e9,
-        'scan': latest('scan', np.full(SCAN_SECTORS, np.nan, dtype=np.float32)).astype(np.float32),
+        'scan': latest('scan', np.full(SCAN_SECTORS, np.nan, dtype=np.float32), SENSOR_MAX_AGE).astype(np.float32),
+        'scan_age': np.where(last_scan >= 0, (grid - scan_times[np.maximum(last_scan, 0)]) / 1e9, np.inf).astype(np.float32),
         'cmd': latest('cmd', (0.0, 0.0), COMMAND_TIMEOUT).astype(np.float32),
         'joy_active': latest('joy', False, COMMAND_TIMEOUT).astype(bool),
-        'odom_vel': latest('odom', (0.0, 0.0)).astype(np.float32),
-        'wheel_vels': latest('wheel_vels', (0.0, 0.0)).astype(np.float32),
-        'wheel_current': latest('wheel_status', (0, 0)).astype(np.float32),
+        'odom_vel': latest('odom', nan2, SENSOR_MAX_AGE).astype(np.float32),
+        'wheel_vels': latest('wheel_vels', nan2, SENSOR_MAX_AGE).astype(np.float32),
+        'wheel_current': latest('wheel_status', nan2, SENSOR_MAX_AGE).astype(np.float32),
         'slipping': latest('slip', False).astype(bool),
-        'ir': latest('ir', np.full(len(IR_FRAMES), np.nan, dtype=np.float32)).astype(np.float32),
+        'ir': latest('ir', np.full(len(IR_FRAMES), np.nan, dtype=np.float32), SENSOR_MAX_AGE).astype(np.float32),
         'kidnapped': latest('kidnap', False).astype(bool),
         'docked': latest('dock', False).astype(bool),
         'battery': latest('battery', np.nan).astype(np.float32),
@@ -224,7 +232,7 @@ def build_steps(s: dict) -> dict:
     steps['bump'] = bump
 
     # Floor sensor: it reports total distance moved; speed is the change over one step.
-    mouse = latest('mouse', (np.nan, np.nan, 0)).astype(np.float64)
+    mouse = latest('mouse', (np.nan, np.nan, np.nan), SENSOR_MAX_AGE).astype(np.float64)
     moved = np.hypot(np.diff(mouse[:, 0], prepend=mouse[0, 0]), np.diff(mouse[:, 1], prepend=mouse[0, 1]))
     steps['mouse_speed'] = (moved * RATE).astype(np.float32)
     steps['mouse_quality'] = mouse[:, 2].astype(np.float32)
@@ -264,6 +272,7 @@ def summarize(name: str, steps: dict, meta: dict) -> str:
         f'  told to go forward but not moving over the floor: {pushing.sum() * dt:.0f} s; '
         f'wheel slip reported: {steps["slipping"].sum() * dt:.0f} s',
         f'  mapped {area:.1f} m² at most; battery {battery[0] * 100:.0f}% → {battery[-1] * 100:.0f}%',
+        f'  lidar missing {(steps["scan_age"] > SENSOR_MAX_AGE).sum() * dt:.0f} s',
     ])
 
 

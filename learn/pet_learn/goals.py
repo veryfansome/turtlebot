@@ -19,7 +19,7 @@ import math
 import numpy as np
 
 from pet_learn.geodesic import DistanceField, passable
-from pet_learn.reward import RewardParams, arrived, heading_error, potential
+from pet_learn.reward import RewardParams, arrived, heading_error, motor_current, potential
 
 GOAL_SCALE = 3.0  # goal offsets (m) are divided by this; farther goals are clipped to this distance
 
@@ -51,19 +51,26 @@ class Transitions:
     hindsight: np.ndarray  # (m,) the goal is a pose the recorded driving went on to reach
 
 
+def empty_transitions() -> Transitions:
+    z = lambda *shape, dtype=np.float32: np.zeros(shape, dtype)
+    return Transitions(z(0, dtype=np.int64), z(0, 5), z(0, 5), z(0), z(0), z(0, dtype=np.int64), z(0), z(0, dtype=bool))
+
+
 def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, rng: np.random.Generator,
             window_s: float = 30.0, hindsight: float = 0.7, gamma: float = 0.99, rescue_goals: int = 100,
             p: RewardParams = RewardParams()) -> Transitions:
-    """Transitions for n_goals goals, using only usable steps (ok) in [lo, hi), plus rescue_goals for
+    """Transitions for n_goals goals, using only scored steps (ok, episodes.scored) in [lo, hi), plus rescue_goals for
     each rescue in that range."""
     rate = float(steps['rate'])
     dt = 1.0 / rate
     window = int(window_s * rate)
     pose = steps['pose'].astype(np.float64)
-    currents = np.abs(steps['wheel_current']).sum(axis=1) / 1000.0
+    currents = motor_current(steps)
     candidates = np.flatnonzero(ok[lo:hi]) + lo
     rescues = [int(r) for r in np.flatnonzero(steps.get('rescue', np.zeros(len(ok), bool))[lo:hi]) + lo
                if r > lo and ok[r - 1]]
+    if len(candidates) == 0:  # e.g. a held-out tail recorded after the lidar's messages stopped
+        return empty_transitions()
     jobs = [(int(rng.choice(candidates)), None) for _ in range(n_goals)]
     jobs += [(r - 1, r) for r in rescues for _ in range(rescue_goals)]
     parts = []
@@ -110,6 +117,8 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
         elif rescue is not None:  # it ends stuck, waiting for a person
             reward[-1] -= p.rescue_penalty
             done[-1] = True
+        if not np.isfinite(reward).all():  # NaN would spread into every weight in training
+            raise ValueError(f'non-finite reward in the episode ending at step {goal_k}')
         g = goal_features(pose[ks], goal)
         ret = np.zeros(len(reward))
         acc = 0.0
@@ -118,6 +127,8 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
             ret[i] = acc
         parts.append((ks[:-1], g[:-1], g[1:], reward.astype(np.float32), done, np.full(len(reward), e), ret,
                       np.full(len(reward), is_hindsight)))
+    if not parts:
+        return empty_transitions()
     cat = lambda i, dtype: np.concatenate([q[i] for q in parts]).astype(dtype)
     return Transitions(cat(0, np.int64), cat(1, np.float32), cat(2, np.float32), cat(3, np.float32),
                        cat(4, np.float32), cat(5, np.int64), cat(6, np.float32), cat(7, bool))

@@ -38,8 +38,8 @@ def test_the_driver_is_symmetric_by_construction():
     from pet_learn.model import WorldModel
     from pet_learn.train_driver import Driver, encode_pair, input_mirror
     torch.manual_seed(0)
-    world, driver, m = WorldModel(82, z_dim=16, hidden=32), Driver(16, hidden=32), input_mirror(82)
-    x, g, a = torch.randn(8, 82), torch.randn(8, 5), torch.randn(8, 2)
+    world, driver, m = WorldModel(87, z_dim=16, hidden=32), Driver(16, hidden=32), input_mirror(87)
+    x, g, a = torch.randn(8, 87), torch.randn(8, 5), torch.randn(8, 2)
     flip_g, flip_a = torch.tensor([1., -1, 1, -1, 1]), torch.tensor([1., -1])
     with torch.no_grad():
         s, sm = encode_pair(world, x, m), encode_pair(world, x @ m, m)
