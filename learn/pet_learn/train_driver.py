@@ -9,8 +9,9 @@ on goals in the held-out last 20% of each session:
 
 - values: how well V(state, goal) agrees with the recorded driving's actual discounted return
   (rank correlation; IQL aims above the recorded driving, so agreement in order is what counts);
-- policy: what it does with the goal placed straight ahead, behind, left and right of real held-out
-  states with open space ahead: it should drive forward, turn around, turn left and turn right.
+- policy: what it does with the goal placed ahead, to the sides, back-left, back-right and straight
+  behind real held-out states with open space ahead: it should drive forward, and turn toward the
+  others (straight behind, either way is as good, so a mirrored policy may turn neither way).
 """
 import argparse
 import copy
@@ -31,6 +32,8 @@ from pet_learn.model import WorldModel, mlp, world_loss
 from pet_learn.train_world import to_torch
 
 GOAL_DIM, ACTION_DIM = 5, 2
+BEHIND = np.radians(120)  # a goal at a bearing beyond this is behind the robot
+REVERSE_CAP = 0.15 / 0.3  # the safety layer's reverse limit, in the action's units (forward is scaled by 0.3 m/s)
 
 
 class Driver(nn.Module):
@@ -86,6 +89,9 @@ def main():
     parser.add_argument('--reward-scale', type=float, default=10.0,
                         help="rewards are multiplied by this for training: one step's reward is a few hundredths, too "
                              'small for the advantage weights to tell actions apart')
+    parser.add_argument('--behind-weight', type=float, default=3.0,
+                        help='the policy counts steps with the goal behind the robot this many times: turning to '
+                             'face a goal is rare in driving that mostly heads forward')
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
 
@@ -115,13 +121,14 @@ def main():
     windows = [(i, s) for i, d in enumerate(sessions) for s in d.train]
 
     def transition_batch(trs, idx_by_session, mirrored):
-        x0, x1, a, g0, g1, r, d = [], [], [], [], [], [], []
+        x0, x1, a, g0, g1, r, d, hs = [], [], [], [], [], [], [], []
         for i, idx in idx_by_session.items():
             t, data = trs[i], sessions[i]
             k = t.step[idx]
             x0.append(data.inputs[k]); x1.append(data.inputs[k + 1]); a.append(data.actions[k])
             g0.append(t.goal[idx]); g1.append(t.next_goal[idx]); r.append(t.reward[idx]); d.append(t.done[idx])
-        b = [np.concatenate(v) for v in (x0, x1, a, g0, g1, r, d)]
+            hs.append(t.hindsight[idx].astype(np.float32))
+        b = [np.concatenate(v) for v in (x0, x1, a, g0, g1, r, d, hs)]
         if mirrored:
             b[0], b[1] = mirror_inputs(b[0]), mirror_inputs(b[1])
             b[2] = b[2] * np.array([1, -1], np.float32)
@@ -145,7 +152,7 @@ def main():
         wloss, _ = world_loss(world, to_torch({k: np.concatenate([p[k] for p in parts]) for k in parts[0]}, 'cpu'))
 
         # IQL.
-        x0, x1, a, g0, g1, r, d = transition_batch(train_tr, sample(train_tr, args.batch), mirrored=it % 2 == 0)
+        x0, x1, a, g0, g1, r, d, hs = transition_batch(train_tr, sample(train_tr, args.batch), mirrored=it % 2 == 0)
         z0 = world.encode(x0)
         with torch.no_grad():
             z1 = world.encode(x1)
@@ -159,8 +166,13 @@ def main():
         mean, std = driver.policy(z0.detach(), g0)
         with torch.no_grad():
             weight = torch.clamp(torch.exp(args.beta * (torch.min(tq1, tq2) - v)), max=100.0)
-        logp = torch.distributions.Normal(mean, std).log_prob(a).sum(-1)
-        actor_loss = -(weight * logp).mean()
+        # The policy learns the recorded commands within the safety layer's limits (the controller's turbo
+        # goes past them), and only from hindsight goals; values and the world model see them as sent.
+        target_a = torch.stack([a[:, 0].clamp(-REVERSE_CAP, 1.0), a[:, 1].clamp(-1.0, 1.0)], dim=-1)
+        logp = torch.distributions.Normal(mean, std).log_prob(target_a).sum(-1)
+        behind = torch.atan2(g0[:, 1], g0[:, 0]).abs() > BEHIND
+        share = hs * torch.where(behind, args.behind_weight, 1.0)
+        actor_loss = -(weight * logp * share).sum() / share.sum().clamp(min=1.0)
 
         loss = wloss + v_loss + q_loss + actor_loss
         opt.zero_grad()
@@ -197,12 +209,13 @@ def main():
                 continue
             z = world.encode(torch.as_tensor(data.inputs[open_ahead]))
             zero = np.zeros((len(open_ahead), 3))
-            for name, goal in [('ahead', (2, 0, 0)), ('behind', (-2, 0, np.pi)), ('left', (0, 2, np.pi / 2)),
-                               ('right', (0, -2, -np.pi / 2))]:
+            for name, deg in [('ahead', 0), ('left', 90), ('right', -90), ('back-left', 150), ('back-right', -150),
+                              ('behind', 180)]:
+                goal = (2 * np.cos(np.radians(deg)), 2 * np.sin(np.radians(deg)), np.radians(deg))
                 g = torch.as_tensor(goal_features(zero, goal))
                 mean, _ = driver.policy(z, g)
                 fwd, turn = np.median(mean.numpy(), axis=0) * np.array([0.3, 1.5])
-                print(f'  {name:6s} forward {fwd:+.2f}, turn {turn:+.2f}   ({len(open_ahead)} states)')
+                print(f'  {name:10s} forward {fwd:+.2f}, turn {turn:+.2f}   ({len(open_ahead)} states)')
             break
 
     os.makedirs(os.path.join(data_dir, 'models'), exist_ok=True)

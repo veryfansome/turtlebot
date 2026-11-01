@@ -4,6 +4,9 @@ Every recorded step can be scored against any goal. Goals are poses the robot re
 session (hindsight, so the data shows how to get there) or random poses in mapped free space (so
 values also learn about goals the driving never reached). For each goal, the steps up to window_s
 before it become transitions, scored with the goal-reaching reward.
+
+Only hindsight transitions teach the policy (Transitions.hindsight): the recorded commands weren't
+aimed at random goals, so for those they say nothing about how to reach the goal.
 """
 from dataclasses import dataclass
 import math
@@ -40,6 +43,7 @@ class Transitions:
     done: np.ndarray  # (m,) arrived at t + 1
     episode: np.ndarray  # (m,) which goal it belongs to
     ret: np.ndarray  # (m,) actual discounted return from t (the recorded driving's), for checking values
+    hindsight: np.ndarray  # (m,) the goal is a pose the recorded driving went on to reach
 
 
 def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, rng: np.random.Generator,
@@ -58,7 +62,8 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
         gmap = maps.map_at(steps['t'][goal_k])
         if gmap is None:
             continue
-        if rng.random() < hindsight:
+        is_hindsight = rng.random() < hindsight
+        if is_hindsight:
             goal = pose[goal_k]
         else:  # a random pose in mapped free space
             free = np.argwhere(passable(gmap, 0.2))
@@ -95,7 +100,8 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
         for i in range(len(reward) - 1, -1, -1):
             acc = reward[i] + gamma * acc * (1.0 - done[i])
             ret[i] = acc
-        parts.append((ks[:-1], g[:-1], g[1:], reward.astype(np.float32), done, np.full(len(reward), e), ret))
+        parts.append((ks[:-1], g[:-1], g[1:], reward.astype(np.float32), done, np.full(len(reward), e), ret,
+                      np.full(len(reward), is_hindsight)))
     cat = lambda i, dtype: np.concatenate([q[i] for q in parts]).astype(dtype)
     return Transitions(cat(0, np.int64), cat(1, np.float32), cat(2, np.float32), cat(3, np.float32),
-                       cat(4, np.float32), cat(5, np.int64), cat(6, np.float32))
+                       cat(4, np.float32), cat(5, np.int64), cat(6, np.float32), cat(7, bool))
