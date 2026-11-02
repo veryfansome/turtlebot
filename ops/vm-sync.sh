@@ -9,7 +9,7 @@ ssh -o BatchMode=yes turtlebot-vm bash -s -- "${1:-}" <<'REMOTE'
 set -euo pipefail
 branch=${1:-}  # SSH drops an empty argument
 cd ~/turtlebot
-if pgrep -f "ros2 launch pet_" >/dev/null; then  # explore or record
+if pgrep -f "ros2 launch pet_" >/dev/null; then  # a recording
   echo "error: a field test is running; stop it first (ops/field-test.sh stop)" >&2
   exit 1
 fi
@@ -25,7 +25,9 @@ echo "~/turtlebot on $(git branch --show-current) at $(git log --oneline -1)"
 set +u
 source /opt/ros/jazzy/setup.bash
 set -u
+# pet_explorer was removed on 2026-11-01; colcon leaves a deleted package's build and install behind.
+rm -rf build/pet_explorer install/pet_explorer
 colcon build --symlink-install 2>&1 | tail -2
-colcon test --packages-select pet_drive pet_explorer >/dev/null 2>&1 || true
-colcon test-result --all
+colcon test --packages-select pet_drive >/dev/null 2>&1 || true
+colcon test-result --test-result-base build/pet_drive
 REMOTE
