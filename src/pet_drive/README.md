@@ -1,6 +1,6 @@
 # pet_drive
 
-Driving the TurtleBot 4 without Nav2 (stage 2 of the [roadmap](../../ROADMAP.md)): the safety layer, the one node that sends drive commands to the wheels, so a scripted wander or a learned policy can drive without being able to hurt the robot or the house; and the recorder, which collects the driving sessions a policy learns from.
+Driving the TurtleBot 4 without Nav2 (stage 2 of the [roadmap](../../ROADMAP.md)): the safety layer, the one node that sends drive commands to the wheels, so a scripted wander or a learned policy can drive without being able to hurt the robot or the house; the pickup node, which pauses SLAM while the robot is carried and resets it after; and the recorder, which collects the driving sessions a policy learns from.
 
 ## The safety layer
 
@@ -34,14 +34,14 @@ The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Not
 
 - **Recording started:** one long note, once the base is listening.
 - **Lidar lost:** the lidar silent tone (without the red ring) when scans stop arriving for over 2 s while off the dock, repeated every 20 s, then the two rising blips when they're back. It warns that a recording has lost the lidar. The lidar turning itself off on the dock doesn't count.
-- **Call for help:** a two-note siren when the robot needs a person: stuck (over the last 5 s it was told to travel at least 0.5 m, forward or back, but the floor sensor measured under 30% of that; when stuck, a person rocks it, so the commands keep reversing), or its wheels without power for over 1 s while on the floor (an e-stop). Replayed over the recordings, the stuck rule called before all 8 rescues. Repeated every 10 s while it lasts, and published on `/drive/distress` (recorded), so recordings are labelled without anyone pressing a button. Being picked up or docked doesn't count.
+- **Call for help:** a two-note siren when the robot needs a person: stuck (over the last 5 s it was told to travel at least 0.5 m, forward or back, but the floor sensor measured under 30% of that; when stuck, a person rocks it, so the commands keep reversing), or its wheels without power for over 1 s while on the floor (an e-stop). Replayed over the recordings, the stuck rule called before all 8 rescues. Repeated every 10 s while it lasts, and published on `/drive/distress` (recorded: a `std_msgs/String`, `stuck` or `wheels without power`), so recordings are labelled without anyone pressing a button. Being picked up or docked doesn't count.
 - **Rescue noted:** two low beeps when you press the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)), so you know the press was seen.
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
 
 ## After a pickup
 
-SLAM tracks the robot mostly by wheel motion, and the wheels don't see it being carried, so after a pickup its map no longer matches where the robot is. The pickup node ([pet_drive/pickup_node.py](pet_drive/pickup_node.py)) handles it as the explorer does: when the base reports the robot picked up, it pauses SLAM (the view from mid-air shouldn't go into the map); 1 s after it's set down, it resets SLAM to a fresh map, as if a new session started, and announces it on `/drive/slam_reset`. Training treats positions before and after a reset as on different maps.
+SLAM tracks the robot mostly by wheel motion, and the wheels don't see it being carried, so after a pickup its map no longer matches where the robot is. The pickup node ([pet_drive/pickup_node.py](pet_drive/pickup_node.py)) handles it: when the base reports the robot picked up, it pauses SLAM (the view from mid-air shouldn't go into the map); 1 s after it's set down, it resets SLAM to a fresh map, as if a new session started, and announces it on `/drive/slam_reset`. Training treats positions before and after a reset as on different maps.
 
 ## Recording driving sessions
 
@@ -108,3 +108,13 @@ ros2 topic pub -r 10 /drive/cmd_vel geometry_msgs/msg/TwistStamped "{twist: {lin
 - Tones and light ring colours sent from the VM reach the base through the relay (the lidar-silent pattern and red ring, heard and seen).
 
 Not yet checked: whether the ring keeps our colour for a long stop, or the robot takes it back after a while.
+
+## Built 2026-11-01, not yet checked on the robot
+
+- The start tone (one long note once the base is listening).
+- The rescue beeps (two low beeps on Y).
+- The lidar-lost alarm off the dock (every 20 s, blips when scans are back).
+- The call for help (two-note siren; `/drive/distress` in the bag).
+- The pickup node (SLAM paused on lift, reset 1 s after set-down; `/drive/slam_reset` in the bag). Runs in the record launch.
+
+The first recording after a VM sync should confirm each, by ear and in the bag (the field-test skill has the checklist).

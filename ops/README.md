@@ -17,11 +17,10 @@ Read-only. Checks the robot's software, base, battery and dock state, lidar, cam
 ```bash
 ops/vm-sync.sh [branch]        # pull, rebuild and test ~/turtlebot in the VM (pushed commits only)
 ops/field-test.sh start record  # preflight checks, then SLAM + safety layer + a bag of the session in ~/drives/ (drives nothing itself)
-ops/field-test.sh start explore # preflight checks, then SLAM + Nav2 + explorer: drives the robot (paused)
-ops/field-test.sh status       # running or not, the latest explorer/safety lines, the bag's size
+ops/field-test.sh status       # running or not, the latest safety-layer and pickup lines, the bag's size
 ops/field-test.sh logs [lines] # the end of the run's log (kept in ~/field-tests/ on the VM)
 ops/field-test.sh save-map     # save the SLAM map to ~/maps/<run>/ on the VM
-ops/field-test.sh stop         # save the map, then stop the run; the explorer cancels its goal first
+ops/field-test.sh stop         # save the map, then stop the run
 ops/field-test.sh estop on|off # the base's e-stop: cut or restore drive motor power
 ops/pull-drives.sh             # copy recorded sessions from the VM to data/drives/ on the Mac (git-ignored)
 ```
@@ -49,6 +48,10 @@ ops/run.sh <pi|vm> <unit> revert   # undo it, restart, verify
 |---|---|---|
 | `pi/create3-relays` | Uncomments `hazard_detection`, `kidnap_status`, `mouse`, `slip_status`, `wheel_vels` and `ir_intensity` in `/opt/ros/jazzy/share/turtlebot4_bringup/config/republisher.yaml`; restarts `turtlebot4` | The safety layer and recordings need hazards (cliffs, wheel drops, bumps) and kidnap status; recordings use the floor sensor (`mouse`), wheel slip and wheel speeds to tell real motion from wheels spinning, and the front infrared sensors (`ir_intensity`) to see what's below the lidar. A TurtleBot 4 package update can overwrite the file: check `status` after updates. |
 
+## Troubleshooting
+
+When the robot won't drive, scans go missing on the VM, or the camera doesn't publish, follow the robot-fault skill (`.claude/skills/robot-fault/SKILL.md`). Traps that gave false readings before: `ros2 topic list` hides the base's `/_do_not_use/...` topics unless you pass `--include-hidden-topics`; `ros2 node list` shows nothing on the Pi even while everything runs; publisher counts need `--no-daemon --spin-time 5`; the base's log is in UTC while the Pi uses local time.
+
 ## Not scripted
 
 Some changes are risky enough that they stay manual, done by a person with the steps written down:
@@ -56,4 +59,4 @@ Some changes are risky enough that they stay manual, done by a person with the s
 - Pi network or Wi-Fi settings: the easiest way to lose access to the robot.
 - Firmware updates for the Pi or the Create 3 base, and `apt upgrade` on the Pi.
 - Disk partitions or the boot configuration.
-- The Create 3 base's own config file, in its web page (Application → Configuration). Currently set there: `safety_override: "backup_only"` under `/**/motion_control:`, so the robot can reverse more than about an inch. The key needs the `/**/` prefix to match the base's `/_do_not_use` namespace. `ops/health.sh` checks the live value.
+- The Create 3 base's own config file, in its web page (Application → Configuration). Currently set there: `safety_override: "backup_only"` under `/**/motion_control:`, so the robot can reverse more than about an inch. The key needs the `/**/` prefix to match the base's `/_do_not_use` namespace. `ops/health.sh` checks the live value. Setting it live through `/_do_not_use/motion_control/set_parameters` lasts only until the base restarts. After changing any base setting, read it back (as health.sh does) before testing: a web-config key without the `/**/` prefix once silently did nothing.

@@ -2,26 +2,32 @@
 
 Runs batches of world-model trainings ("waves") on a rented RunPod GPU pod: hyperparameter grids, and the evolve search's candidates (`learn/evolve`), scored the same way. Adapted from the sibling projects (`terminal-wm/cloud`, `jepa/terminal-jepa`): `runpod.sh` and `lane.sh` keep every guard they learned the hard way; `jobpool.py` is jepa's, as is.
 
+Status (2026-11-01): reviewed twice, never launched. The first launch is the speed probe (about $0.50), with the owner's go.
+
 ```bash
 cd learn
 uv run python ../cloud/wave.py probe probe-1                                  # the speed probe, first
 uv run python ../cloud/wave.py grid bs-lr-1 --param optim.batch=256,1024,4096 --param optim.lr=3e-4,6e-4,1.2e-3
 uv run python ../cloud/wave.py make cands-1 --genome g1=path/to/genome.json   # evolve candidates
+uv run python ../cloud/wave.py estimate bs-lr-1                               # what it will cost, before any launch
 cd ..
 bash cloud/runpod.sh reap        # anything already billing on the account?
 bash cloud/lane.sh run bs-lr-1   # provision -> bootstrap -> data -> wave -> poll -> download -> verify -> terminate
 cd learn && uv run python ../cloud/wave.py summary bs-lr-1     # results side by side
+uv run python ../cloud/wave.py verify bs-lr-1                  # every expected result came home
 uv run python ../cloud/wave.py ingest cands-1                  # into the evolve archive
 ```
 
 | File | What |
 |---|---|
-| `runpod.sh` | The provider client (curl + jq + ssh + rsync). Deploys a pod (recorded in `~/.runpod-pods.log` the moment it exists), ships the committed code (`git archive HEAD`: `learn/` + `cloud/`), syncs learn's environment, pulls the pinned sessions from the private Hugging Face dataset, starts a wave in tmux, pulls results, terminates. `reap` lists every pod on the account against that ledger. |
+| `runpod.sh` | The provider client (curl + jq + ssh + rsync). Deploys a pod (recorded in `~/.runpod-pods.log` the moment it exists), ships the committed code (`git archive HEAD`: `learn/` + `cloud/`), syncs learn's environment, pulls the evolve search's sessions (`learn/eval/data_manifest.json`) at the pinned revision from the private Hugging Face dataset, starts a wave in tmux, pulls results, terminates. `reap` lists every pod on the account against that ledger. |
 | `lane.sh` | One command per wave, end to end, with the pod confirmed stopped. |
 | `wave.py` | On the Mac: make a wave (explicit genomes, a grid, or the probe), estimate its cost, verify and summarize results, ingest them into the evolve archive. |
 | `wave_pod.py` | On the pod: `eval.preflight` once, `eval.smoke` and `eval.guard_leakage` per genome (ingesting skips the engine's own gates), `eval.adapter` per seed through the job pool, seeds folded into one record per genome. |
 | `jobpool.py` | Runs a wave's trainings several at a time on one pod, threads sized to the pod's real CPU quota (pods report the host's 128 cores but are capped at ~13). |
 | `probe.py` | How fast training is on the pod (GPU vs CPU, batch size, how many at once), to size waves before spending on them. |
+
+`cloud/waves/NAME/` (made by wave.py) holds `wave.json`, `genomes/` and any new candidate impl under `chunks/`. Commit the first two; `chunks/` is git-ignored and goes to the campaign repo. Wave names are never reused.
 
 **Safety.** Everything the lane does to cost money is bounded:
 - A run's estimate must fit `RUNPOD_BUDGET_USD` (default $20) before a pod is rented, and the run stops when the pod's time reaches it.

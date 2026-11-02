@@ -1,6 +1,6 @@
 # Ubuntu VM for the TurtleBot 4
 
-The robot runs Ubuntu 24.04 / ROS 2 Jazzy, so the Mac-side tools (rviz, teleop, Nav2 clients) run in an Ubuntu 24.04 arm64 VM in [UTM](https://mac.getutm.app/) with bridged networking.
+The robot runs Ubuntu 24.04 / ROS 2 Jazzy, so the ROS 2 side of this project (SLAM, the safety layer, the recorder, RViz) runs in an Ubuntu 24.04 arm64 VM in [UTM](https://mac.getutm.app/) with bridged networking.
 
 ## Creating the VM
 
@@ -35,9 +35,17 @@ Notes:
       IdentityFile ~/.ssh/turtlebot_ed25519
       IdentitiesOnly yes
   ```
+  The ops scripts reach the robot's Pi the same way, as `turtlebot-pi`:
+  ```
+  Host turtlebot-pi
+      HostName <robot-ip>
+      User <pi-user>
+      IdentityFile ~/.ssh/turtlebot_ed25519
+      IdentitiesOnly yes
+  ```
   The address comes from your router and can change; `ip -4 addr show` in the VM shows it. A rebuilt VM has a new host key, so run `ssh-keygen -R <old-ip>` first.
 - The repo is cloned over HTTPS, which works without credentials while it's public. To push from the VM, switch the remote to SSH (`git remote set-url origin git@github.com:veryfansome/turtlebot.git`) and add a key GitHub knows.
-- After pulling changes in `~/turtlebot`, rebuild with `colcon build --symlink-install` there. New terminals pick up the build automatically.
+- To update the VM's checkout, run `bash ops/vm-sync.sh [branch]` from the Mac (it pulls, builds and runs the tests). New terminals pick up the build automatically.
 - With GPU acceleration on, UTM can't suspend the VM, so closing its window force-kills it. Shut down from inside Ubuntu instead.
 - `provision.sh` sets `ROS_DOMAIN_ID=0` and `RMW_IMPLEMENTATION=rmw_fastrtps_cpp` in `~/.bashrc`, matching the robot's `/etc/turtlebot4/setup.bash` (simple discovery, no discovery server). If you change those on the robot, change them in the VM too.
 

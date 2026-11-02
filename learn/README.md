@@ -14,7 +14,7 @@ uv run python -m pet_learn.convert
 
 `convert` turns every session in `data/drives/` that hasn't been converted yet into `data/steps/<session>.npz` and `<session>.maps.npz` (every SLAM map, about one a second) (`--force` redoes them all), and prints a summary of each: how far it drove, bumps by side, time spent told to go forward without moving, wheel slip, area mapped, battery, and how long the lidar was missing. Both folders are git-ignored. New recordings are just more sessions: pull, convert, and training picks them up.
 
-The converted sessions are also on Hugging Face, as the private dataset `veryfansome/turtlebot-steps`, so RunPod pods can pull them rather than wait for an upload from home: `uv run python -m pet_learn.hub push` uploads new or changed files and pins the revision in `learn/data_source.json` (commit it); `pull --to DIR` fetches the pinned revision; `status` says what isn't pushed yet. The token is `HF_TOKEN`, from the environment or `~/.runpod.env`.
+The converted sessions are also on Hugging Face, as the private dataset `veryfansome/turtlebot-steps`, so RunPod pods can pull them rather than wait for an upload from home: `uv run python -m pet_learn.hub push` uploads new or changed files and pins the revision in `learn/data_source.json` (commit it); `pull --to DIR` fetches the pinned revision (`--manifest eval/data_manifest.json`: only the evolve search's sessions and their maps, as pods do); `status` says what isn't pushed yet. The token is `HF_TOKEN`, from the environment or `~/.runpod.env`.
 
 Each steps file holds one row per step at 10 Hz, aligned on the time the VM received each message. The fields (listed in `STEP_FIELDS` in [pet_learn/convert.py](pet_learn/convert.py)):
 
@@ -47,11 +47,11 @@ Told to go forward while the floor sensor says it isn't moving is the "pushing" 
 Learning to drive means reaching a goal pose (position and heading) efficiently; see the [roadmap](../ROADMAP.md).
 
 - [pet_learn/geodesic.py](pet_learn/geodesic.py): shortest-path distance to a goal through the SLAM map: mapped free space only, at least 12 cm from walls (a bit less than the robot's radius: SLAM's walls are fuzzy). The straight line would reward pushing into the couch to reach a goal behind it.
-- [pet_learn/reward.py](pet_learn/reward.py): each step earns its progress (the drop in shortest-path distance, and near the goal in heading error, as a potential, so loops can't farm it), minus 0.1 per second and 0.1 per amp-second of motor current, plus 1.0 on arriving within 20 cm and 20 degrees. In the first session, normal driving drew about 0.19 A and pushing against something about 0.42 A.
+- [pet_learn/reward.py](pet_learn/reward.py): each step earns its progress (the drop in shortest-path distance, and near the goal in heading error, as a potential, so loops can't farm it), minus 0.1 per second and 0.1 per amp-second of motor current, plus 1.0 on arriving within 20 cm and 20 degrees; an episode that runs into a rescue ends as a failure with −3.0. In the first session, normal driving drew about 0.19 A and pushing against something about 0.42 A.
 - [pet_learn/episodes.py](pet_learn/episodes.py): cuts sessions into episodes after the fact (hindsight relabeling): a random start, and the pose the robot had 3–60 s later as the goal. Steps without a SLAM pose, more than 10 s after the last scan (the pose drifts without scans), docked, picked up, from each set-down until the fresh map that follows it is under way (2 s after the reset, and a map published after it), or where the pose jumped (a SLAM correction) are left out. No episode spans a fresh map, and a rescue's goals come from the same map. Episodes also end, without a penalty, where the wheels lost power (an e-stop isn't the robot's failure); the world model still learns from those steps, with whether the motors have power as an input.
 - [pet_learn/report.py](pet_learn/report.py): `uv run python -m pet_learn.report` prints, per session, success rate, SPL (success weighted by shortest path over path driven: 1.0 is perfect), time and energy per metre of shortest path, reward, bumps per minute, time stuck and rescues. A report, not a ranking.
 
-First session (controller, 300 hindsight episodes): SPL 0.48, 19 s and 4.1 A·s per metre of shortest path, reward −1.41 per episode. That's expected: a person driving around wasn't heading for a point a random 3–60 s later, so most episodes meander. The direct ones (SPL ≥ 0.8, 22 of 300) earn +0.84 on average, the least direct (SPL < 0.3) −2.96. Recorded driving bootstraps the learner rather than being copied: meandering episodes still teach it what things are worth, because they're scored.
+On the first session (2026-10-31; rerun `pet_learn.report` for current numbers), 300 hindsight episodes: SPL 0.48, 19 s and 4.1 A·s per metre of shortest path, reward −1.41 per episode. That's expected: a person driving around wasn't heading for a point a random 3–60 s later, so most episodes meander. The direct ones (SPL ≥ 0.8, 22 of 300) earn +0.84 on average, the least direct (SPL < 0.3) −2.96. Recorded driving bootstraps the learner rather than being copied: meandering episodes still teach it what things are worth, because they're scored.
 
 ## The driving model
 
@@ -70,4 +70,5 @@ Models are saved to `data/models/` (git-ignored), each with a run record beside 
 
 ```bash
 uv run pytest
+uv run pytest ../cloud/tests -q   # the RunPod lane's offline tests
 ```

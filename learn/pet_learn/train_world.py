@@ -2,7 +2,7 @@
 
     uv run python -m pet_learn.train_world [--steps ../data/steps] [--patience 2000] [--seed 0] [--genome G.json]
 
-The last 20% of each session is held out: the first half of it (val) picks the best model and when to
+The last 20% of each session's scored driving is held out: the first half of it (val) picks the best model and when to
 stop, and the second half (test) is what's reported, so the choice can't flatter the result. Each
 head is compared, at 0.1 s, 0.5 s and 1 s ahead, with a
 naive baseline on the held-out windows: "the reading stays as it is" for sensors, "keep the current
