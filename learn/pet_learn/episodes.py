@@ -21,6 +21,12 @@ RESCUE_HANDLING_S = 10.0  # after a rescue press, a person is handling the robot
 SCAN_GAP_LIMIT_S = 60.0
 # ... and goals and rewards, which measure distances on the map, use only steps this close to one.
 SCORED_SCAN_GAP_S = 10.0
+# After a pickup SLAM starts a fresh map (/drive/slam_reset) once the robot is set down. From each
+# set-down until the fresh map is under way, poses aren't trustworthy: until RESET_SETTLE_S after the
+# reset (SLAM's first fix on the new map), and until a map published after the reset exists to score
+# them on. A reset more than RESET_WITHIN_S after a set-down isn't counted as its.
+RESET_SETTLE_S = 2.0
+RESET_WITHIN_S = 10.0
 
 
 @dataclass
@@ -48,7 +54,8 @@ def usable(steps: dict, max_scan_gap: float = SCAN_GAP_LIMIT_S) -> np.ndarray:
     robot is driving on the floor (not docked or picked up, not being rescued), and the pose didn't
     jump (a SLAM reset or big correction)."""
     pose = steps['pose']
-    ok = np.isfinite(pose).all(axis=1) & ~steps['docked'] & ~steps['kidnapped'] & ~rescue_handling(steps)
+    ok = (np.isfinite(pose).all(axis=1) & ~steps['docked'] & ~steps['kidnapped'] & ~rescue_handling(steps)
+          & ~reset_settling(steps))
     if 'scan_age' in steps:  # sessions converted before it was recorded had no gaps kept
         ok &= steps['scan_age'] <= max_scan_gap
     jump = np.hypot(*np.diff(pose[:, :2], axis=0, prepend=pose[:1, :2]).T)
@@ -59,6 +66,42 @@ def scored(steps: dict) -> np.ndarray:
     """Steps an episode can include, scored with the reward: usable, and with a scan in the last
     SCORED_SCAN_GAP_S, so the pose they're measured on is still close to the map."""
     return usable(steps, SCORED_SCAN_GAP_S)
+
+
+def map_segment(steps: dict) -> np.ndarray:
+    """(n,) which SLAM map each step's pose is on: 0 until the first reset after a pickup, then 1, ..."""
+    resets = steps.get('slam_reset', np.zeros(len(steps['t']), bool))
+    return np.cumsum(resets)
+
+
+def reset_settling(steps: dict) -> np.ndarray:
+    """Steps from each set-down until the fresh map after the SLAM reset that follows it is under way
+    (see RESET_SETTLE_S). Every set-down counts: a person often lifts the robot twice in quick
+    succession, and between the two its pose is still on the paused old map."""
+    n = len(steps['t'])
+    settling = np.zeros(n, dtype=bool)
+    resets = np.flatnonzero(steps.get('slam_reset', np.zeros(n, bool)))
+    if len(resets) == 0:
+        return settling
+    rate, t = float(steps['rate']), steps['t']
+    map_time = steps.get('map_time')
+    for r in resets:
+        end = int(r + RESET_SETTLE_S * rate) + 1
+        if map_time is not None:  # and until a map from after the reset has arrived
+            fresh = np.flatnonzero(map_time[r:] >= t[r])
+            end = max(end, int(r + fresh[0]) if len(fresh) else n)
+        settling[r:min(n, end)] = True
+    lifted = steps['kidnapped']
+    set_downs = np.flatnonzero(np.diff(lifted.astype(int)) == -1) + 1
+    for b in set_downs:
+        following = resets[resets >= b]
+        if not len(following):
+            continue
+        r = int(following[0])
+        # Lifted again before that reset (it waited for the last set-down): still on the paused old map.
+        if lifted[b:r].any() or r - b <= RESET_WITHIN_S * rate:
+            settling[b:r] = True
+    return settling
 
 
 def rescue_handling(steps: dict) -> np.ndarray:

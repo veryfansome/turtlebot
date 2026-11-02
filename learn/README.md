@@ -31,6 +31,8 @@ Each steps file holds one row per step at 10 Hz, aligned on the time the VM rece
 | `slipping`, `stall`, `cliff_or_drop` | (n,) | the base's wheel-slip detection; wheel stall, cliff or wheel drop reported during the step |
 | `bump` | (n, 3) | a bump began during the step: left, centre, right |
 | `kidnapped`, `docked`, `battery` | (n,) | picked up, on the dock, battery fraction |
+| `slam_reset` | (n,) | SLAM started a fresh map during the step, after a pickup: poses before and after are on different maps |
+| `map_time` | (n,) | when the latest SLAM map arrived (s, like `t`): after a reset, whether a map of the fresh session exists yet |
 | `pose` | (n, 3) | SLAM pose: x, y (m), yaw (rad); nan before SLAM has one; without scans, SLAM's last correction plus the wheel odometry |
 | `known_cells`, `new_cells` | (n,) | mapped cells in SLAM's map, and how many became mapped during the step |
 
@@ -42,7 +44,7 @@ Learning to drive means reaching a goal pose (position and heading) efficiently;
 
 - [pet_learn/geodesic.py](pet_learn/geodesic.py): shortest-path distance to a goal through the SLAM map: mapped free space only, at least 12 cm from walls (a bit less than the robot's radius: SLAM's walls are fuzzy). The straight line would reward pushing into the couch to reach a goal behind it.
 - [pet_learn/reward.py](pet_learn/reward.py): each step earns its progress (the drop in shortest-path distance, and near the goal in heading error, as a potential, so loops can't farm it), minus 0.1 per second and 0.1 per amp-second of motor current, plus 1.0 on arriving within 20 cm and 20 degrees. In the first session, normal driving drew about 0.19 A and pushing against something about 0.42 A.
-- [pet_learn/episodes.py](pet_learn/episodes.py): cuts sessions into episodes after the fact (hindsight relabeling): a random start, and the pose the robot had 3–60 s later as the goal. Steps without a SLAM pose, more than 10 s after the last scan (the pose drifts without scans), docked, picked up, or where the pose jumped (a SLAM reset) are left out.
+- [pet_learn/episodes.py](pet_learn/episodes.py): cuts sessions into episodes after the fact (hindsight relabeling): a random start, and the pose the robot had 3–60 s later as the goal. Steps without a SLAM pose, more than 10 s after the last scan (the pose drifts without scans), docked, picked up, from each set-down until the fresh map that follows it is under way (2 s after the reset, and a map published after it), or where the pose jumped (a SLAM correction) are left out. No episode spans a fresh map, and a rescue's goals come from the same map.
 - [pet_learn/report.py](pet_learn/report.py): `uv run python -m pet_learn.report` prints, per session, success rate, SPL (success weighted by shortest path over path driven: 1.0 is perfect), time and energy per metre of shortest path, reward, bumps per minute, time stuck and rescues. A report, not a ranking.
 
 First session (controller, 300 hindsight episodes): SPL 0.48, 19 s and 4.1 A·s per metre of shortest path, reward −1.41 per episode. That's expected: a person driving around wasn't heading for a point a random 3–60 s later, so most episodes meander. The direct ones (SPL ≥ 0.8, 22 of 300) earn +0.84 on average, the least direct (SPL < 0.3) −2.96. Recorded driving bootstraps the learner rather than being copied: meandering episodes still teach it what things are worth, because they're scored.

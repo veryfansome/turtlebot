@@ -112,6 +112,64 @@ def test_episodes_that_run_into_a_rescue_end_as_failures():
     assert (t.step < 150).all()
 
 
+def test_after_a_pickup_nothing_is_used_until_slam_has_settled_on_its_fresh_map():
+    from pet_learn.episodes import map_segment
+    steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(100)])
+    steps['kidnapped'][30:40] = True  # picked up for 1 s
+    steps['slam_reset'] = np.zeros(100, bool)
+    steps['slam_reset'][50] = True  # SLAM reset 1 s after being set down
+    ok = usable(steps)
+    assert ok[:30].all() and not ok[30:71].any() and ok[71:].all()  # through 2 s after the reset
+    assert map_segment(steps)[49] == 0 and map_segment(steps)[50] == 1
+
+
+def test_lifting_it_twice_in_quick_succession_leaves_nothing_on_the_paused_old_map():
+    steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(150)])
+    steps['kidnapped'][30:40] = True
+    steps['kidnapped'][45:55] = True  # lifted again 0.5 s after being set down
+    steps['slam_reset'] = np.zeros(150, bool)
+    steps['slam_reset'][65] = True
+    ok = usable(steps)
+    assert ok[:30].all() and not ok[30:86].any() and ok[86:].all()
+
+
+def test_a_long_second_lift_still_leaves_nothing_on_the_old_map():
+    steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(300)])
+    steps['kidnapped'][30:40] = True
+    steps['kidnapped'][45:160] = True  # lifted again, this time for 11.5 s
+    steps['slam_reset'] = np.zeros(300, bool)
+    steps['slam_reset'][170] = True
+    ok = usable(steps)
+    assert ok[:30].all() and not ok[30:191].any() and ok[191:].all()
+
+
+def test_after_a_reset_nothing_is_scored_until_a_map_from_after_it_exists():
+    steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(150)])
+    steps['kidnapped'][30:40] = True
+    steps['slam_reset'] = np.zeros(150, bool)
+    steps['slam_reset'][50] = True
+    steps['map_time'] = np.where(np.arange(150) < 100, 2.0, 10.0)  # first fresh map at 10 s, step 100
+    ok = usable(steps)
+    assert not ok[40:100].any() and ok[100:].all()
+
+
+def test_a_rescue_episode_never_takes_its_goal_from_a_fresh_map():
+    from pet_learn.goals import relabel
+    def rescue_transitions(shift):
+        steps = drive([(0.5 + 0.01 * k, 1.5, 0.0) for k in range(200)])
+        steps['rescue'] = np.zeros(200, bool)
+        steps['rescue'][60] = True
+        steps['kidnapped'][62:70] = True
+        steps['slam_reset'] = np.zeros(200, bool)
+        steps['slam_reset'][80] = True
+        steps['pose'][80:, 1] += shift  # the fresh map's frame is unrelated to the old one
+        return relabel(steps, OPEN, usable(steps), 0, 200, 0, np.random.default_rng(0), rescue_goals=50)
+    a, b = rescue_transitions(0.3), rescue_transitions(0.9)
+    assert len(a.step) > 0 and a.done.sum() > 0  # rescue episodes, ending as failures
+    # Where the robot went on the fresh map can't have been used as a goal: changing it changes nothing.
+    assert np.array_equal(a.goal, b.goal) and np.array_equal(a.reward, b.reward)
+
+
 def test_a_stretch_with_nothing_to_score_gives_no_transitions():
     from pet_learn.goals import relabel
     steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(50)])

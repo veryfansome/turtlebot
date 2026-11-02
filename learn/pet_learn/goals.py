@@ -18,6 +18,7 @@ import math
 
 import numpy as np
 
+from pet_learn.episodes import map_segment
 from pet_learn.geodesic import DistanceField, passable
 from pet_learn.reward import RewardParams, arrived, heading_error, motor_current, potential
 
@@ -66,6 +67,7 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
     window = int(window_s * rate)
     pose = steps['pose'].astype(np.float64)
     currents = motor_current(steps)
+    segment = map_segment(steps)
     candidates = np.flatnonzero(ok[lo:hi]) + lo
     rescues = [int(r) for r in np.flatnonzero(steps.get('rescue', np.zeros(len(ok), bool))[lo:hi]) + lo
                if r > lo and ok[r - 1]]
@@ -80,7 +82,8 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
         if gmap is None:
             continue
         is_hindsight = rescue is None and rng.random() < hindsight
-        later = candidates[candidates > rescue] if rescue is not None else []
+        # Goals it reached after being freed, on the same SLAM map (a pickup's reset starts a new one).
+        later = candidates[(candidates > rescue) & (segment[candidates] == segment[rescue])] if rescue is not None else []
         if is_hindsight:
             goal = pose[goal_k]
         elif len(later) and rng.random() < 0.5:
