@@ -63,9 +63,17 @@ def usable(steps: dict, max_scan_gap: float = SCAN_GAP_LIMIT_S) -> np.ndarray:
 
 
 def scored(steps: dict) -> np.ndarray:
-    """Steps an episode can include, scored with the reward: usable, and with a scan in the last
-    SCORED_SCAN_GAP_S, so the pose they're measured on is still close to the map."""
-    return usable(steps, SCORED_SCAN_GAP_S)
+    """Steps an episode can include, scored with the reward: usable, with a scan in the last
+    SCORED_SCAN_GAP_S (so the pose they're measured on is still close to the map), and with the wheels
+    powered. Without power (an e-stop) the robot can't act, which isn't its failure: episodes end
+    there, cut short without a penalty. The world model still learns from those steps, with
+    wheels_enabled as an input, that commands then do nothing."""
+    return usable(steps, SCORED_SCAN_GAP_S) & wheels_enabled(steps)
+
+
+def wheels_enabled(steps: dict) -> np.ndarray:
+    """(n,) the motors had power (sessions converted before this was recorded: assume so)."""
+    return steps.get('wheels_enabled', np.ones(len(steps['t']), bool)).astype(bool)
 
 
 def map_segment(steps: dict) -> np.ndarray:

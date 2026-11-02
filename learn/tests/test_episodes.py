@@ -170,6 +170,21 @@ def test_a_rescue_episode_never_takes_its_goal_from_a_fresh_map():
     assert np.array_equal(a.goal, b.goal) and np.array_equal(a.reward, b.reward)
 
 
+def test_without_motor_power_episodes_end_there_without_a_penalty():
+    from pet_learn.episodes import scored
+    from pet_learn.goals import relabel
+    steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(100)])
+    steps['scan_age'] = np.zeros(100, np.float32)
+    steps['wheels_enabled'] = np.ones(100, bool)
+    steps['wheels_enabled'][50:60] = False  # e-stopped for 1 s
+    assert usable(steps)[50:60].all()  # the world model learns that commands do nothing then
+    ok = scored(steps)
+    assert not ok[50:60].any() and ok[:50].all() and ok[60:].all()
+    tr = relabel(steps, OPEN, ok, 0, 100, 40, np.random.default_rng(0))
+    assert not np.isin(tr.step, np.arange(49, 60)).any()  # no transition into or within it
+    assert tr.reward.min() > -1.0  # no rescue-sized penalty anywhere
+
+
 def test_a_stretch_with_nothing_to_score_gives_no_transitions():
     from pet_learn.goals import relabel
     steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(50)])

@@ -2,7 +2,7 @@
 and windows of consecutive steps for predicting up to H steps ahead."""
 import numpy as np
 
-from pet_learn.episodes import scored, usable
+from pet_learn.episodes import scored, usable, wheels_enabled
 
 FORWARD_CAP, TURN_CAP = 0.3, 1.5  # the safety layer's caps (m/s, rad/s): actions are scaled by them
 SCAN_CAP = 4.0  # lidar sectors are capped at this (m): beyond it, distance matters little for driving
@@ -30,7 +30,8 @@ MASKS = {name: f'{name}_ok' for name in SENSORS}
 # Where each sensor's readings and its "real" flag sit in the encoder's inputs (inputs()).
 INPUT_COLUMNS = {'scan': slice(0, 60), 'floor': slice(60, 61), 'odom': slice(61, 63), 'wheels': slice(63, 65),
                  'current': slice(65, 67), 'ir': slice(74, 81)}
-FLAG_COLUMNS = {'ir': 81, 'scan': 82, 'floor': 83, 'odom': 84, 'wheels': 85, 'current': 86}
+WHEELS_ENABLED_COLUMN = 81  # the motors have power: without it (an e-stop) commands do nothing
+FLAG_COLUMNS = {'ir': 82, 'scan': 83, 'floor': 84, 'odom': 85, 'wheels': 86, 'current': 87}
 
 
 def present(steps: dict) -> dict:
@@ -76,14 +77,15 @@ def actions(steps: dict) -> np.ndarray:
 
 def inputs(steps: dict) -> np.ndarray:
     """What the encoder sees at each step: every target reading, plus wheel stall, the previous drive
-    command, and whether each sensor's readings are real (FLAG_COLUMNS)."""
+    command, whether the motors have power, and whether each sensor's readings are real (FLAG_COLUMNS)."""
     t = step_targets(steps)
     ok = present(steps)
     previous = np.vstack([np.zeros((1, 2), np.float32), actions(steps)[:-1]])
     stall = steps['stall'][:, None].astype(np.float32)
     bump_sides = steps['bump'].astype(np.float32)  # left, centre, right: more than the target's any-bump
+    powered = wheels_enabled(steps)[:, None].astype(np.float32)
     parts = [t['scan'], t['floor'], t['odom'], t['wheels'], t['current'], bump_sides, t['slip'], stall, previous, t['ir'],
-             ok['ir'], ok['scan'], ok['floor'], ok['odom'], ok['wheels'], ok['current']]
+             powered, ok['ir'], ok['scan'], ok['floor'], ok['odom'], ok['wheels'], ok['current']]
     return np.concatenate(parts, axis=1).astype(np.float32)
 
 
@@ -136,7 +138,7 @@ def mirror_inputs(x: np.ndarray) -> np.ndarray:
     """Encoder inputs (..., d) flipped left to right (see mirror)."""
     x = x.copy()
     # Input layout (inputs()): scan 60, floor 1, odom 2, wheels 2, current 2, bump sides 3, slip, stall, previous 2,
-    # IR 7, then the sensors' "real" flags (FLAG_COLUMNS), which don't change in a mirror
+    # IR 7, wheels powered, then the sensors' "real" flags (FLAG_COLUMNS); those last don't change in a mirror
     x[..., 0:60] = x[..., 59::-1]
     x[..., 62] = -x[..., 62]  # turn rate
     x[..., 63:65] = x[..., 64:62:-1]  # wheels left <-> right
