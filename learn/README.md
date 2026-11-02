@@ -14,6 +14,8 @@ uv run python -m pet_learn.convert
 
 `convert` turns every session in `data/drives/` that hasn't been converted yet into `data/steps/<session>.npz` and `<session>.maps.npz` (every SLAM map, about one a second) (`--force` redoes them all), and prints a summary of each: how far it drove, bumps by side, time spent told to go forward without moving, wheel slip, area mapped, battery, and how long the lidar was missing. Both folders are git-ignored. New recordings are just more sessions: pull, convert, and training picks them up.
 
+The converted sessions are also on Hugging Face, as the private dataset `veryfansome/turtlebot-steps`, so RunPod pods can pull them rather than wait for an upload from home: `uv run python -m pet_learn.hub push` uploads new or changed files and pins the revision in `learn/data_source.json` (commit it); `pull --to DIR` fetches the pinned revision; `status` says what isn't pushed yet. The token is `HF_TOKEN`, from the environment or `~/.runpod.env`.
+
 Each steps file holds one row per step at 10 Hz, aligned on the time the VM received each message. The fields (listed in `STEP_FIELDS` in [pet_learn/convert.py](pet_learn/convert.py)):
 
 | Field | Shape | What |
