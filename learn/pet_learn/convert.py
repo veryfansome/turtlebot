@@ -40,6 +40,8 @@ STEP_FIELDS = {
     'odom_vel': 'wheel odometry: forward m/s, turn rad/s; nan when missing',
     'wheel_vels': 'wheel speeds: left, right (rad/s); nan when missing',
     'wheel_current': 'motor currents: left, right (mA); nan when missing',
+    'wheels_enabled': "the base's motors have power (False on an e-stop, or while it's picked up)",
+    'distress': 'the safety layer called for help during this step (/drive/distress): stuck, or the wheels lost power',
     'mouse_speed': 'speed over the floor from the optical floor sensor (m/s); nan when missing',
     'mouse_quality': 'floor sensor surface quality (higher is better tracking); nan when missing',
     'slipping': "the base's wheel-slip detection",
@@ -62,7 +64,7 @@ def read_session(path: str) -> dict:
     """All the messages the steps are built from, as time-sorted arrays (times in ns)."""
     series = {name: ([], []) for name in (
         'scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
-        'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset')}
+        'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset', 'wheels_enabled', 'distress')}
     meta = {}
     maps = []  # (time, grid, origin, resolution) for each SLAM map
     raw_scans = []  # (time, ranges, angle_min, angle_increment, range_max, frame)
@@ -96,12 +98,15 @@ def read_session(path: str) -> dict:
             rescue_held = pressed
         elif topic == '/drive/slam_reset':
             add('slam_reset', t, True)
+        elif topic == '/drive/distress':
+            add('distress', t, True)
         elif topic == '/odom':
             add('odom', t, (msg.twist.twist.linear.x, msg.twist.twist.angular.z))
         elif topic == '/wheel_vels':
             add('wheel_vels', t, (msg.velocity_left, msg.velocity_right))
         elif topic == '/wheel_status':
             add('wheel_status', t, (msg.current_ma_left, msg.current_ma_right))
+            add('wheels_enabled', t, bool(msg.wheels_enabled))
         elif topic == '/mouse':
             add('mouse', t, (msg.integrated_x, msg.integrated_y, msg.last_squal))
         elif topic == '/ir_intensity':
@@ -219,6 +224,7 @@ def build_steps(s: dict) -> dict:
         'odom_vel': latest('odom', nan2, SENSOR_MAX_AGE).astype(np.float32),
         'wheel_vels': latest('wheel_vels', nan2, SENSOR_MAX_AGE).astype(np.float32),
         'wheel_current': latest('wheel_status', nan2, SENSOR_MAX_AGE).astype(np.float32),
+        'wheels_enabled': latest('wheels_enabled', True).astype(bool),
         'slipping': latest('slip', False).astype(bool),
         'ir': latest('ir', np.full(len(IR_FRAMES), np.nan, dtype=np.float32), SENSOR_MAX_AGE).astype(np.float32),
         'kidnapped': latest('kidnap', False).astype(bool),
@@ -226,6 +232,7 @@ def build_steps(s: dict) -> dict:
         'battery': latest('battery', np.nan).astype(np.float32),
         'rescue': during_step('rescue', lambda v: v),
         'slam_reset': during_step('slam_reset', lambda v: v),
+        'distress': during_step('distress', lambda v: v),
         'stall': during_step('hazard', lambda h: h[0] == HAZARD_TYPES['stall']),
         'cliff_or_drop': during_step('hazard', lambda h: h[0] in (HAZARD_TYPES['cliff'], HAZARD_TYPES['wheel_drop'])),
     }
@@ -278,7 +285,9 @@ def summarize(name: str, steps: dict, meta: dict) -> str:
         f'  bumps {int(steps["bump"].any(axis=1).sum())} (left {int(steps["bump"][:, 0].sum())}, '
         f'centre {int(steps["bump"][:, 1].sum())}, right {int(steps["bump"][:, 2].sum())}), '
         f'stall reports in {int(steps["stall"].sum())} steps, rescues {int(steps["rescue"].sum())}, '
-        f'SLAM resets after pickups {int(steps["slam_reset"].sum())}',
+        f'SLAM resets after pickups {int(steps["slam_reset"].sum())}, '
+        f'wheels without power (not picked up) {((~steps["wheels_enabled"]) & ~steps["kidnapped"]).sum() * dt:.0f} s, '
+        f'calls for help {int(steps["distress"].sum())}',
         f'  told to go forward but not moving over the floor: {pushing.sum() * dt:.0f} s; '
         f'wheel slip reported: {steps["slipping"].sum() * dt:.0f} s',
         f'  mapped {area:.1f} m² at most; battery {battery[0] * 100:.0f}% → {battery[-1] * 100:.0f}%',

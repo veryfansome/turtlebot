@@ -27,7 +27,7 @@ def fake_steps(n=60, ir=True):
 def test_ir_is_an_input_and_mirrors_left_to_right():
     steps = fake_steps()
     x = inputs(steps)
-    assert x.shape[1] == 87 and np.all(x[:, 81:] == 1)
+    assert x.shape[1] == 88 and np.all(x[:, 81:] == 1)  # wheels powered, then every sensor's flag
     ir = x[:, 74:81]
     assert np.allclose(mirror_inputs(x)[:, 74:81], ir[:, ::-1])
     assert np.allclose(mirror_inputs(mirror_inputs(x)), x)
@@ -35,7 +35,7 @@ def test_ir_is_an_input_and_mirrors_left_to_right():
 
 def test_sessions_without_ir_are_masked_out_of_the_loss():
     old = SessionData(fake_steps(ir=False))
-    assert np.all(old.inputs[:, 74:82] == 0)  # missing readings and "not recorded"
+    assert np.all(old.inputs[:, 74:81] == 0) and np.all(old.inputs[:, FLAG_COLUMNS['ir']] == 0)  # missing, "not recorded"
     norm = Normalizer([old])
     batch = {k: torch.as_tensor(v) for k, v in window_batch(old, old.train[:8], norm).items()}
     _, parts = world_loss(WorldModel(old.inputs.shape[1], z_dim=16, hidden=32), batch)
@@ -107,6 +107,17 @@ def test_mirroring_swaps_each_sensor_left_to_right():
     odom = INPUT_COLUMNS['odom']
     assert np.allclose(m[:, odom], x[:, odom] * [1, -1])
     assert np.array_equal(m[:, sorted(FLAG_COLUMNS.values())], x[:, sorted(FLAG_COLUMNS.values())])
+
+
+def test_the_encoder_sees_whether_the_motors_have_power():
+    from pet_learn.dataset import WHEELS_ENABLED_COLUMN
+    steps = fake_steps()
+    steps['wheels_enabled'] = np.ones(60, bool)
+    steps['wheels_enabled'][20:30] = False  # e-stopped
+    x = inputs(steps)
+    assert np.all(x[20:30, WHEELS_ENABLED_COLUMN] == 0) and np.all(np.delete(x[:, WHEELS_ENABLED_COLUMN], range(20, 30)) == 1)
+    assert np.array_equal(mirror_inputs(x)[:, WHEELS_ENABLED_COLUMN], x[:, WHEELS_ENABLED_COLUMN])
+    assert len(SessionData(steps).train)  # the world model still learns from them
 
 
 def test_val_and_test_windows_dont_overlap_training_or_each_other():

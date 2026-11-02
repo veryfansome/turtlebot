@@ -22,6 +22,7 @@ Each step (10 Hz) the encoder sees, scaled to similar ranges:
 - whether a bump began, wheel slip, wheel stall;
 - the 7 front IR proximity sensors, as log(1 + reading): they only see the last 10-15 cm and jump steeply up close (see the [roadmap](../ROADMAP.md)), plus whether they were recorded (sessions from before they were relayed have none);
 - the previous drive command (commands take 0.1–0.2 s to show up in the sensors);
+- whether the motors have power (an e-stop cuts it: commands then do nothing, and the world model should learn that rather than be fooled by it);
 - for each sensor (lidar, floor, odometry, wheel speeds, currents, IR), whether its reading is real. A reading is missing when its messages stopped arriving for over 0.5 s (the lidar's go first when Wi-Fi drops big messages) or weren't recorded; missing readings go in as 0 with the flag off.
 
 The action is the drive command: forward speed and turn rate, scaled by the safety layer's caps (0.3 m/s, 1.5 rad/s).
@@ -38,7 +39,7 @@ One loop, one combined loss:
 
 **Missing sensors.** Steps keep going when a sensor's messages stop: the scan is marked missing, and SLAM's last correction carries on with the wheel odometry for the pose. The world model learns from steps up to 60 s after the last scan; goals and rewards, which measure distances on the map, use only steps within 10 s of one (`episodes.scored`), since the pose drifts without scans. A missing motor-current reading carries the last real one forward for the energy cost, and a non-finite reward stops training rather than spreading NaN into the weights. In training, each sensor is also hidden from the encoder at random (5% of windows and transitions each; `--hide`), as if missing, while still being a target: the model learns to predict what it can't see and to drive on what's left. A hidden reading doesn't seed its head's prediction either (heads predict a change from the current reading), so it can't leak back in. The model sees one step at a time, so for now coping means using the other sensors; carrying the last good view through a gap needs memory.
 
-**How long to train.** The world model trains until its val error hasn't improved for 2,000 iterations (`--patience`; at most 50,000), keeping the best: the right length grows with the data. The driver trains a fixed 20,000 iterations: IQL has no held-out loss to stop on. Both train on the Mac's GPU (MPS) when there is one (`--device`).
+**How long to train.** The world model trains until its val error hasn't improved for 2,000 iterations (`--patience`; at most 50,000), keeping the best: the right length grows with the data. The driver trains a fixed 20,000 iterations: IQL has no held-out loss to stop on. Both train on the Mac's GPU (MPS) when there is one (`--device`), with batches of 1,024 at learning rate 6e-4: on five sessions this beat 256 at 3e-4 on the world model's val error (0.44 against 0.50; the lidar head 0.72 against 0.80 on test) and tied on the driver's values, at about the same time per step on the GPU.
 
 ## Validating on recorded data
 

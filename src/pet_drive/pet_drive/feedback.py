@@ -3,6 +3,7 @@ and a colour on its light ring. The base can't speak, only play tones.
 
 Kept free of ROS. Notes are (frequency in Hz, seconds); colours are (red, green, blue), 0-255.
 """
+import math
 
 # Why the safety layer stopped the robot → what it plays and shows while stopped.
 STOPS = {
@@ -22,6 +23,97 @@ RESCUE_BUTTON = 2
 RESCUE_NOTED = [(392, 0.15), (392, 0.15)]  # two low beeps
 # Played once when the safety layer starts and the base is listening: a recording has begun.
 STARTED = [(587, 0.5)]  # one long note: unlike every stop tone, which are short or several
+
+
+# A call for help (DistressWatch): a two-note siren, unlike any stop tone.
+DISTRESS = [(587, 0.25), (440, 0.25)] * 2
+
+
+class DistressWatch:
+    """Notices when the robot needs a person, so it can call for help (and recordings get the label
+    without anyone pressing a button): stuck, or its wheels without power for unpowered_after seconds
+    on the floor (an e-stop). Being picked up or docked isn't distress. check() says when to call: when
+    it starts, then every repeat seconds while it lasts.
+
+    Stuck means told to travel at least min_commanded metres over the last window seconds, while the
+    floor sensor measured less than ratio of that. Checked against the recordings (2026-11-01): when
+    stuck, a person rocks it back and forth, so the commands keep reversing and the floor sensor still
+    jiggles a few centimetres; travel against commands caught all 8 rescues (with 17 other calls in 82
+    minutes, many of them likely real struggles that ended without help). The floor sensor measures
+    path travelled, so tight circles don't look stuck."""
+
+    def __init__(self, window: float = 5.0, min_commanded: float = 0.5, ratio: float = 0.3,
+                 unpowered_after: float = 1.0, repeat: float = 10.0, command_timeout: float = 0.5):
+        self.window, self.min_commanded, self.ratio = window, min_commanded, ratio
+        self.unpowered_after, self.repeat, self.command_timeout = unpowered_after, repeat, command_timeout
+        self.commanded = self.travelled = 0.0  # running totals (m)
+        self.last_command = None  # (t, forward)
+        self.last_floor = None  # (x, y)
+        self.floor_at = None  # its latest reading: without fresh ones, travel can't be told
+        self.history = []  # (t, commanded, travelled) at each check
+        self.unpowered_since = None
+        self.kidnapped = self.docked = False
+        self.called, self.called_at = None, None  # the last call: its reason and when
+
+    def on_command(self, forward: float, t: float):
+        if self.last_command is not None:  # each command holds until the next, for up to command_timeout
+            t0, f0 = self.last_command
+            self.commanded += abs(f0) * min(max(t - t0, 0.0), self.command_timeout)
+        self.last_command = (t, forward)
+
+    def on_floor(self, x: float, y: float, t: float):
+        """The floor sensor's integrated position (m)."""
+        if self.last_floor is not None:
+            self.travelled += math.hypot(x - self.last_floor[0], y - self.last_floor[1])
+        self.last_floor, self.floor_at = (x, y), t
+
+    def on_wheels(self, enabled: bool, t: float):
+        if enabled:
+            self.unpowered_since = None
+        elif self.unpowered_since is None:
+            self.unpowered_since = t
+
+    def on_kidnap(self, kidnapped: bool, t: float):
+        if self.kidnapped and not kidnapped and self.unpowered_since is not None:
+            self.unpowered_since = t  # set down: the base takes about 0.6 s to power the wheels again
+        self.kidnapped = kidnapped
+
+    def on_docked(self, docked: bool):
+        self.docked = docked
+
+    def reason(self, t: float):
+        """'wheels without power', 'stuck' or None."""
+        if self.kidnapped or self.docked:
+            self.history.clear()
+            return None
+        if self.unpowered_since is not None:
+            self.history.clear()  # travel without power isn't the robot's doing
+            return 'wheels without power' if t - self.unpowered_since >= self.unpowered_after else None
+        if self.floor_at is None or t - self.floor_at > self.command_timeout:
+            self.history.clear()
+            return None
+        self.history.append((t, self.commanded, self.travelled))
+        while len(self.history) > 1 and self.history[1][0] <= t - self.window:
+            self.history.pop(0)
+        t0, c0, f0 = self.history[0]
+        if t - t0 < self.window:
+            return None
+        commanded, travelled = self.commanded - c0, self.travelled - f0
+        if commanded >= self.min_commanded and travelled < self.ratio * commanded:
+            return 'stuck'
+        return None
+
+    def check(self, t: float):
+        """The reason to call for help now, or None. Call it regularly (it keeps the travel window). The
+        same reason is called at most every repeat seconds, even if it briefly went away (a measure
+        hovering at the threshold); a different reason is called at once."""
+        why = self.reason(t)
+        if why is None:
+            return None
+        if why != self.called or t - self.called_at >= self.repeat:
+            self.called, self.called_at = why, t
+            return why
+        return None
 
 
 class LidarWatch:

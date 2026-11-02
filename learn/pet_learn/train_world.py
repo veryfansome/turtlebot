@@ -116,8 +116,10 @@ def main():
                         help='stop after this many iterations without a better val error')
     parser.add_argument('--hide', type=float, default=0.05,
                         help='chance each sensor is hidden from the encoder in a training window (dataset.hide)')
-    parser.add_argument('--batch', type=int, default=256)
-    parser.add_argument('--lr', type=float, default=3e-4)
+    # Batch 1024 at 6e-4 beat 256 at 3e-4 on the world model's val error (0.44 vs 0.50, 2026-11-01), and
+    # takes about as long per step on the GPU; the learning rate goes with the batch (sqrt scaling).
+    parser.add_argument('--batch', type=int, default=1024)
+    parser.add_argument('--lr', type=float, default=6e-4)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', default=default_device())
     parser.add_argument('--hidden', type=int, default=128)

@@ -39,6 +39,7 @@ TOPICS = [
     '/drive/cmd_vel',  # what a driver asked the safety layer for
     '/drive/safety',  # why the safety layer changed it
     '/drive/slam_reset',  # SLAM started a fresh map after a pickup: positions before and after don't compare
+    '/drive/distress',  # the safety layer called for help: stuck, or the wheels lost power
     '/joy',  # the controller: whether a person was driving
 ]
 # Off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, enough to

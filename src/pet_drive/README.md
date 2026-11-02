@@ -34,6 +34,7 @@ The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Not
 
 - **Recording started:** one long note, once the base is listening.
 - **Lidar lost:** the lidar silent tone (without the red ring) when scans stop arriving for over 2 s while off the dock, repeated every 20 s, then the two rising blips when they're back. It warns that a recording has lost the lidar. The lidar turning itself off on the dock doesn't count.
+- **Call for help:** a two-note siren when the robot needs a person: stuck (over the last 5 s it was told to travel at least 0.5 m, forward or back, but the floor sensor measured under 30% of that; when stuck, a person rocks it, so the commands keep reversing), or its wheels without power for over 1 s while on the floor (an e-stop). Replayed over the recordings, the stuck rule called before all 8 rescues. Repeated every 10 s while it lasts, and published on `/drive/distress` (recorded), so recordings are labelled without anyone pressing a button. Being picked up or docked doesn't count.
 - **Rescue noted:** two low beeps when you press the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)), so you know the press was seen.
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
@@ -69,6 +70,7 @@ What's recorded, and why:
 | `/cmd_vel` | What the wheels were told, by the safety layer or the controller |
 | `/drive/cmd_vel`, `/drive/safety` | What a driver asked for, and why the safety layer changed it |
 | `/drive/slam_reset` | SLAM started a fresh map after a pickup: positions before and after it are on different maps |
+| `/drive/distress` | The safety layer called for help: stuck, or the wheels without power |
 | `/joy` | The controller: whether a person was driving, and rescues (press Y just before freeing a stuck robot) |
 
 `camera:=true` adds the camera's preview. It's off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, which risks losing lidar scans. Compressed frames would need a camera change on the Pi.
