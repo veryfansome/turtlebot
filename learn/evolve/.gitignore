@@ -2,3 +2,11 @@
 archive/private/
 *.json.bak.*
 *.json.tmp
+# The campaign lives in its own private repo (evolve/campaign.py push|pull): candidate impls, the
+# archive, round notes, insights. This repo keeps the contract: the config, the manual, the baselines.
+.campaign/
+archive/
+rounds/
+insights.md
+chunks/*/*
+!chunks/*/baseline_*.py

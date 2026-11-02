@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 data/
 .venv/
+# RunPod lane: pulled results (model checkpoints) and per-wave pod state
+cloud/results/
+cloud/.lane-*

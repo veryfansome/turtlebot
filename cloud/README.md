@@ -1,0 +1,39 @@
+# cloud/: training waves on RunPod
+
+Runs batches of world-model trainings ("waves") on a rented RunPod GPU pod: hyperparameter grids, and the evolve search's candidates (`learn/evolve`), scored the same way. Adapted from the sibling projects (`terminal-wm/cloud`, `jepa/terminal-jepa`): `runpod.sh` and `lane.sh` keep every guard they learned the hard way; `jobpool.py` is jepa's, as is.
+
+```bash
+cd learn
+uv run python ../cloud/wave.py probe probe-1                                  # the speed probe, first
+uv run python ../cloud/wave.py grid bs-lr-1 --param optim.batch=256,1024,4096 --param optim.lr=3e-4,6e-4,1.2e-3
+uv run python ../cloud/wave.py make cands-1 --genome g1=path/to/genome.json   # evolve candidates
+cd ..
+bash cloud/runpod.sh reap        # anything already billing on the account?
+bash cloud/lane.sh run bs-lr-1   # provision -> bootstrap -> data -> wave -> poll -> download -> verify -> terminate
+cd learn && uv run python ../cloud/wave.py summary bs-lr-1     # results side by side
+uv run python ../cloud/wave.py ingest cands-1                  # into the evolve archive
+```
+
+| File | What |
+|---|---|
+| `runpod.sh` | The provider client (curl + jq + ssh + rsync). Deploys a pod (recorded in `~/.runpod-pods.log` the moment it exists), ships the committed code (`git archive HEAD`: `learn/` + `cloud/`), syncs learn's environment, pulls the pinned sessions from the private Hugging Face dataset, starts a wave in tmux, pulls results, terminates. `reap` lists every pod on the account against that ledger. |
+| `lane.sh` | One command per wave, end to end, with the pod confirmed stopped. |
+| `wave.py` | On the Mac: make a wave (explicit genomes, a grid, or the probe), estimate its cost, verify and summarize results, ingest them into the evolve archive. |
+| `wave_pod.py` | On the pod: `eval.preflight` once, `eval.smoke` and `eval.guard_leakage` per genome (ingesting skips the engine's own gates), `eval.adapter` per seed through the job pool, seeds folded into one record per genome. |
+| `jobpool.py` | Runs a wave's trainings several at a time on one pod, threads sized to the pod's real CPU quota (pods report the host's 128 cores but are capped at ~13). |
+| `probe.py` | How fast training is on the pod (GPU vs CPU, batch size, how many at once), to size waves before spending on them. |
+
+**Safety.** Everything the lane does to cost money is bounded:
+- A run's estimate must fit `RUNPOD_BUDGET_USD` (default $20) before a pod is rented, and the run stops when the pod's time reaches it.
+- One pod at a time, SECURE cloud, on-demand.
+- On any failure or at the budget, the lane pulls what finished, then terminates the pod and confirms it with RunPod (the terminate call alone exits 0 even on an API error). `LANE_KEEP_POD=1` keeps a failed pod up to inspect.
+- Results come home on every poll, so a stop loses little.
+- Deploys are never retried (a retried deploy is a second, untracked pod), every wait is bounded by wall clock, and `reap` finds a pod an interrupted launch left behind.
+
+**Secrets.** `RUNPOD_API_KEY` and the Hugging Face token come from `~/.runpod.env`; neither is ever printed. The pod gets `HF_TOKEN` (or `HF_READ_TOKEN`, if set: a read-only one), as the sibling projects' pods do, through ssh's stdin into a mode-600 file on the pod, never on a command line; terminating the pod deletes it. The GraphQL API takes its key in the URL, so it can show in a local process listing while a call runs.
+
+**Hosts.** `learn/` locks torch 2.15.0, whose only CUDA builds need a CUDA 13 driver (CUDA 12 wheels stop at 2.14.1), so `launch` re-rolls any pod whose driver is older rather than swap torch versions, which would change the scores.
+
+**Comparing results.** Each record carries `env`, e.g. `runpod-geforce-rtx-4090-c3` (the GPU and how many trainings shared it: thread counts change float results). Scores compare only within one env; the evolve search selects within `fitness.selection_env`.
+
+Tests (offline): `cd learn && uv run pytest ../cloud/tests -q`.

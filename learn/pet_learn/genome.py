@@ -38,6 +38,12 @@ def load(path=None, overrides=None) -> dict:
     else:
         with open(path) as f:
             genome = json.load(f)
+    return load_dict(genome, overrides, path)
+
+
+def load_dict(genome: dict, overrides=None, path=None) -> dict:
+    """A genome given as a dict, checked and completed like load() (a copy; the argument is untouched)."""
+    genome = json.loads(json.dumps(genome))
     chunks = genome.get('chunks')
     if not isinstance(chunks, dict):
         raise ValueError(f'{path}: a genome needs a "chunks" dict')
