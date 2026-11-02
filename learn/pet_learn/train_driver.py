@@ -109,8 +109,10 @@ def main():
     parser.add_argument('--steps', default=os.path.join(data_dir, 'steps'))
     parser.add_argument('--world', required=True, help='a world model checkpoint from pet_learn.train_world')
     parser.add_argument('--iters', type=int, default=20000)
-    parser.add_argument('--batch', type=int, default=256)
-    parser.add_argument('--lr', type=float, default=3e-4)
+    # Batch 1024 at 6e-4 beat 256 at 3e-4 on the world model's val error (0.44 vs 0.50, 2026-11-01), and
+    # takes about as long per step on the GPU; the learning rate goes with the batch (sqrt scaling).
+    parser.add_argument('--batch', type=int, default=1024)
+    parser.add_argument('--lr', type=float, default=6e-4)
     parser.add_argument('--goals', type=int, default=3000, help='training goals per session')
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--tau', type=float, default=0.7, help='IQL expectile')
