@@ -2,7 +2,7 @@
 head at every horizon (masked where the reading is missing), classification loss for bump (bumps
 weighted 10x) and slip, squared error of the pose change, plus a latent consistency term.
 
-CONTRACT (objective axis). Expose loss(model, batch) -> (total, parts): total a scalar tensor
+CONTRACT (objective axis). Expose loss(model, batch, **params) -> (total, parts): total a scalar tensor
 carrying grad, parts a dict of named scalar tensors (for logging). batch is one standardized
 training batch from the batcher (dataset.raw_batch's keys, standardized by dataset.Normalizer:
 inputs (B, h+1, d), actions (B, h, 2), every dataset.TARGETS name (B, h+1, size), pose
@@ -15,5 +15,6 @@ predicting well earns nothing.
 from pet_learn.model import world_loss
 
 
-def loss(model, batch):
-    return world_loss(model, batch)
+def loss(model, batch, consistency=1.0):
+    """consistency: the weight of the latent consistency term (predicted states against the encoder's)."""
+    return world_loss(model, batch, consistency=consistency)

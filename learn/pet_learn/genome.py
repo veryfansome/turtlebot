@@ -8,7 +8,7 @@ evolve/chunks/<axis>/<impl>.py, with optional params:
 The axes and what an impl must expose (each baseline file's docstring is the full contract):
 
 - arch: build(input_dim, **params) -> the world model (pet_learn.model.WorldModel's interface).
-- objective: loss(model, batch) -> (total, parts): the training loss.
+- objective: loss(model, batch, **params) -> (total, parts): the training loss.
 - optim: make(parameters, **params) -> (optimizer, scheduler or None, batch size).
 - batcher: make(sessions, train, norm, rng, batch_size, **params) -> next_batch(): standardized
   training windows, augmented.

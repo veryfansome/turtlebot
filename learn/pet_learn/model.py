@@ -7,12 +7,16 @@ import torch.nn.functional as F
 from pet_learn.dataset import MASKS, SENSORS, TARGETS
 
 
-def mlp(sizes, out_norm=False):
+def mlp(sizes, out_norm=False, dropout=0.0):
+    """Linear layers through sizes, each hidden one followed by LayerNorm, ELU and (only when dropout > 0,
+    so models without it keep their layer numbering and random draws) dropout."""
     layers = []
     for i in range(len(sizes) - 1):
         layers.append(nn.Linear(sizes[i], sizes[i + 1]))
         if i < len(sizes) - 2:
             layers += [nn.LayerNorm(sizes[i + 1]), nn.ELU()]
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
     if out_norm:
         layers.append(nn.LayerNorm(sizes[-1]))
     return nn.Sequential(*layers)
@@ -20,13 +24,21 @@ def mlp(sizes, out_norm=False):
 
 class WorldModel(nn.Module):
 
-    def __init__(self, input_dim: int, action_dim: int = 2, z_dim: int = 128, hidden: int = 256):
+    def __init__(self, input_dim: int, action_dim: int = 2, z_dim: int = 128, hidden: int = 256,
+                 enc_layers: int = 2, dyn_layers: int = 2, head_layers: int = 1, dropout: float = 0.0):
+        """enc_layers, dyn_layers and head_layers: hidden layers (each `hidden` wide) in the encoder, the
+        dynamics, and each prediction head (the pose head included); dropout after each hidden layer."""
         super().__init__()
-        self.encoder = mlp([input_dim, hidden, hidden, z_dim], out_norm=True)
-        self.dynamics = mlp([z_dim + action_dim, hidden, hidden, z_dim])
+        if min(enc_layers, dyn_layers, head_layers) < 1:
+            raise ValueError('every part needs at least one hidden layer')
+        if not 0 <= dropout < 1:
+            raise ValueError(f'dropout must be in [0, 1), got {dropout}')
+        self.encoder = mlp([input_dim] + [hidden] * enc_layers + [z_dim], out_norm=True, dropout=dropout)
+        self.dynamics = mlp([z_dim + action_dim] + [hidden] * dyn_layers + [z_dim], dropout=dropout)
         self.dyn_norm = nn.LayerNorm(z_dim)
-        self.heads = nn.ModuleDict({name: mlp([z_dim, hidden, size]) for name, (size, _) in TARGETS.items()})
-        self.pose_head = mlp([z_dim * 2, hidden, 3])  # from the start state and the predicted one
+        self.heads = nn.ModuleDict({name: mlp([z_dim] + [hidden] * head_layers + [size], dropout=dropout)
+                                    for name, (size, _) in TARGETS.items()})
+        self.pose_head = mlp([z_dim * 2] + [hidden] * head_layers + [3], dropout=dropout)  # from the start state and the predicted one
 
     def encode(self, x):
         return self.encoder(x)

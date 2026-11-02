@@ -153,8 +153,9 @@ def main():
     parser.add_argument('--genome', help='a genome JSON (pet_learn.genome); default: the baseline')
     parser.add_argument('--out-dir', default=os.path.join(data_dir, 'models'))
     parser.add_argument('--final-steps', help='also score on every window of the sessions in this folder')
-    # The baseline genome's params (its impls' defaults: batch 1024 at 6e-4, hide 0.05, z 64, hidden
-    # 128, weight decay 1e-3); for a plain run only, not with --genome.
+    # Some of the baseline genome's params (its impls' defaults: batch 1024 at 6e-4, hide 0.05, z 64,
+    # hidden 128, weight decay 1e-3); for a plain run only, not with --genome. The rest (depth, dropout,
+    # consistency, warmup, decay) are set by a genome JSON: see README.md.
     parser.add_argument('--hide', type=float, help='chance each sensor is hidden from the encoder in a training window (dataset.hide)')
     parser.add_argument('--batch', type=int)
     parser.add_argument('--lr', type=float)

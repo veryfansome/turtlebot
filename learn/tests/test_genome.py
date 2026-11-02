@@ -117,3 +117,66 @@ def test_the_score_is_a_geometric_mean_no_head_can_dominate():
     assert score(rows) < 0.7  # an arithmetic mean would be about 3
     rows[('ir', 10)] = (float('nan'), float('nan'))  # never recorded: left out
     assert np.isfinite(score(rows))
+
+
+def test_the_new_arch_objective_and_optim_params_default_to_the_old_model():
+    """Depth, dropout, warmup and decay: at their defaults the baseline builds the same layers and draws
+    the same initial weights as before they existed (the fingerprint is the pre-change WorldModel's, at
+    commit 6150a07, seed 0, torch as locked), and no scheduler."""
+    import torch
+    arch, _ = genomes.impl(genomes.load(), 'arch')
+    torch.manual_seed(0)
+    new = arch.build(88, enc_layers=2, dyn_layers=2, head_layers=1, dropout=0.0)
+    sd = new.state_dict()
+    assert len(sd) == 78
+    assert sum(float(v.double().sum()) for v in sd.values()) == pytest.approx(1819.1722541377292, rel=1e-12)
+    assert sum(float((v.double() ** 2).sum()) for v in sd.values()) == pytest.approx(2424.1014644946567, rel=1e-12)
+    assert not any(isinstance(m, torch.nn.Dropout) for m in new.modules())
+    optim, _ = genomes.impl(genomes.load(), 'optim')
+    assert optim.make(new.parameters(), warmup=0, decay_halflife=0)[1] is None
+
+
+def test_depth_and_dropout_change_the_model_and_a_schedule_warms_up_then_halves():
+    import torch
+    arch, _ = genomes.impl(genomes.load(), 'arch')
+    deep = arch.build(88, enc_layers=3, dyn_layers=4, head_layers=2, dropout=0.1)
+    linears = lambda seq: sum(isinstance(m, torch.nn.Linear) for m in seq)
+    assert linears(deep.encoder) == 4 and linears(deep.dynamics) == 5 and linears(deep.pose_head) == 3
+    assert all(linears(h) == 3 for h in deep.heads.values())
+    assert sum(isinstance(m, torch.nn.Dropout) for m in deep.encoder) == 3
+    for bad in ({'dyn_layers': 0}, {'dropout': -0.1}, {'dropout': 1.0}):
+        with pytest.raises(ValueError):
+            arch.build(88, **bad)
+    optim, _ = genomes.impl(genomes.load(), 'optim')
+    opt, scheduler, _ = optim.make(deep.parameters(), lr=1e-3, warmup=4, decay_halflife=10)
+    lrs = []
+    for _ in range(24):
+        lrs.append(opt.param_groups[0]['lr'])
+        opt.step(); scheduler.step()
+    assert lrs[:4] == pytest.approx([2.5e-4, 5e-4, 7.5e-4, 1e-3])
+    assert lrs[4] == pytest.approx(1e-3) and lrs[14] == pytest.approx(5e-4)
+    opt, scheduler, _ = optim.make(deep.parameters(), lr=1e-3, warmup=2.5)  # a fractional warmup never overshoots
+    seen = []
+    for _ in range(5):
+        seen.append(opt.param_groups[0]['lr'])
+        opt.step(); scheduler.step()
+    assert max(seen) == pytest.approx(1e-3)
+
+
+@has_data
+def test_the_objective_weighs_consistency_as_asked(monkeypatch):
+    import torch
+    from eval.common import small_sessions
+    from pet_learn.train_world import to_torch
+    monkeypatch.setenv('PET_STEPS', STEPS)
+    sessions, train, norm = small_sessions()
+    batcher, params = genomes.impl(genomes.load(), 'batcher')
+    batch = to_torch(batcher.make(sessions, train, norm, np.random.default_rng(0), 64, **params)(), 'cpu')
+    objective, _ = genomes.impl(genomes.load(), 'objective')
+    arch, _ = genomes.impl(genomes.load(), 'arch')
+    torch.manual_seed(0)
+    model = arch.build(batch['inputs'].shape[-1])
+    _, one = objective.loss(model, batch)
+    _, three = objective.loss(model, batch, consistency=3.0)
+    assert three['consistency'].item() == pytest.approx(3 * one['consistency'].item(), rel=1e-5)
+    assert one['scan'].item() == pytest.approx(three['scan'].item())
