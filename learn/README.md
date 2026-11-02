@@ -60,6 +60,8 @@ uv run python -m pet_learn.train_world                       # world model, unti
 uv run python -m pet_learn.train_driver --world ../data/models/world-<time>.pt   # values and policy on top
 ```
 
+What's trained, and how, is a genome (`pet_learn/genome.py`): the architecture, objective, optimizer and batches, one implementation each from `evolve/chunks/`. A plain run uses the baseline, with `--batch`, `--lr` and the rest as its params; `--genome` picks another. `evolve/` is an evolutionary search over those (the evolve plugin; `evolve/EVOLVE.md`), scored by `eval/`.
+
 Models are saved to `data/models/` (git-ignored), each with a run record beside it (`<model>.json`, also inside the `.pt`): arguments, code version (commit plus a fingerprint of uncommitted changes), device, sessions, when it stopped, and test results. `uv run python -m pet_learn.runs` lists them side by side.
 
 ## Tests

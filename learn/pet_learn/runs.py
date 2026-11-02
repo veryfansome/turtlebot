@@ -21,12 +21,21 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, '..', '..'))
 MODELS = os.path.join(REPO, 'data', 'models')
-CODE = ['learn/pet_learn', 'learn/pyproject.toml', 'learn/uv.lock']  # what a run's results depend on
+CODE = ['learn/pet_learn', 'learn/evolve/chunks', 'learn/pyproject.toml', 'learn/uv.lock']  # what a run's results depend on
 
 
 def code_version() -> dict:
     """The git commit, and whether the training code (CODE) had uncommitted changes, with a fingerprint
-    of them, so two runs on the same uncommitted code can be told apart from runs on different code."""
+    of them, so two runs on the same uncommitted code can be told apart from runs on different code.
+
+    Where there's no git (an evolve export, a copy on a RunPod pod), whoever starts the run says which
+    code it is in PET_CODE_VERSION (this function's output on the machine with the repo, as JSON);
+    without it, this refuses rather than record a version nobody could identify."""
+    if os.environ.get('PET_CODE_VERSION'):
+        return json.loads(os.environ['PET_CODE_VERSION'])
+    if subprocess.run(['git', '-C', REPO, 'rev-parse', '--git-dir'], capture_output=True).returncode != 0:
+        raise RuntimeError(f'{REPO} is not a git checkout and PET_CODE_VERSION is unset: the run record '
+                           "couldn't say which code made the model")
     def git(*cmd):
         return subprocess.run(['git', '-C', REPO, *cmd], capture_output=True, text=True, check=False).stdout
     diff = git('diff', 'HEAD', '--', *CODE)
@@ -49,13 +58,20 @@ def new_record(kind: str, parser, args) -> dict:
     }
 
 
+def fingerprint(path: str) -> str:
+    """A steps file's content fingerprint (changes on reconversion)."""
+    with open(path, 'rb') as f:
+        return hashlib.sha1(f.read()).hexdigest()[:10]
+
+
+def session_list(paths: list, sessions: list) -> list:
+    return [{'name': os.path.basename(p)[:-4], 'steps': int(len(s.inputs)), 'file': fingerprint(p)}
+            for p, s in zip(paths, sessions)]
+
+
 def add_sessions(record: dict, paths: list, sessions: list):
     """The sessions a run saw: name, steps, and a fingerprint of the steps file (changes on reconversion)."""
-    def fingerprint(path):
-        with open(path, 'rb') as f:
-            return hashlib.sha1(f.read()).hexdigest()[:10]
-    record['sessions'] = [{'name': os.path.basename(p)[:-4], 'steps': int(len(s.inputs)), 'file': fingerprint(p)}
-                          for p, s in zip(paths, sessions)]
+    record['sessions'] = session_list(paths, sessions)
 
 
 def save(out: str, checkpoint: dict, record: dict):
@@ -84,10 +100,19 @@ def summary(r: dict) -> str:
     data = f"{len(sessions)} sessions/{sum(s['steps'] for s in sessions)} steps"
     files = ''.join(s.get('file', '') for s in sessions)
     data += ' data ' + (hashlib.sha1(files.encode()).hexdigest()[:6] if files else '?')  # ?: recorded before fingerprints
-    version = code['commit'] + (f"+{code['changes']}" if code['dirty'] else '')
+    version = (code.get('commit') or '?') + (f"+{code['changes']}" if code.get('dirty') else '')
     defaults = r.get('defaults', {})
     changed = ' '.join(f'{k}={v}' for k, v in a.items() if k not in ('steps', 'world') and k in defaults and v != defaults[k])
     head = f"{r['model']:32s} {version:18s} {data:34s} {a.get('device', '?'):4s} {changed or 'defaults'}"
+    g = r.get('genome')
+    if g:  # an evolve or non-baseline genome: say which impls and params, beyond the defaults above
+        from pet_learn.genome import BASELINE
+        from_file = bool(a.get('genome'))  # a plain run's params are its flags, already listed
+        differs = [f"{axis}={spec['impl']}{spec['params'] if from_file and spec['params'] else ''}"
+                   for axis, spec in sorted(g['chunks'].items())
+                   if spec['impl'] != BASELINE['chunks'][axis]['impl'] or (from_file and spec['params'])]
+        if differs:
+            head += '  genome ' + ' '.join(differs)
     if r['kind'] == 'world':
         at1 = res.get('test_1s', {})
         scores = ' '.join(f"{k} {at1[k]:.2f}" for k in ('scan', 'odom', 'ir', 'pose', 'bump') if k in at1)

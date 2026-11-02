@@ -1,6 +1,6 @@
 """Train the driving model's world model on converted sessions and judge it on held-out driving.
 
-    uv run python -m pet_learn.train_world [--steps ../data/steps] [--patience 2000] [--seed 0]
+    uv run python -m pet_learn.train_world [--steps ../data/steps] [--patience 2000] [--seed 0] [--genome G.json]
 
 The last 20% of each session is held out: the first half of it (val) picks the best model and when to
 stop, and the second half (test) is what's reported, so the choice can't flatter the result. Each
@@ -8,7 +8,12 @@ head is compared, at 0.1 s, 0.5 s and 1 s ahead, with a
 naive baseline on the held-out windows: "the reading stays as it is" for sensors, "keep the current
 velocity" for the pose change, and the base rate for bumps and slip. A ratio under 1 means the model
 predicts better than the baseline. Training stops once the val error hasn't improved for
---patience iterations (or at --iters), and keeps the best model, saved to data/models/.
+--patience iterations (or at --iters), and keeps the best model, saved to data/models/ (or --out-dir).
+
+What's trained, and how, is a genome (pet_learn.genome): the architecture, the objective, the optimizer
+and the batches. Without --genome it's the baseline, with --batch, --lr and the rest setting its params.
+With --final-steps, the model is also scored on every window of those sessions (recorded after the
+search began, so never optimized against): the evolve search's final split.
 """
 import argparse
 import glob
@@ -20,15 +25,46 @@ import numpy as np
 import torch
 
 from pet_learn.dataset import MASKS, POSE_SCALE, TARGETS, Normalizer, SessionData, window_batch
-from pet_learn.model import WorldModel, current_readings, world_loss
-from pet_learn import runs
+from pet_learn.model import current_readings
+from pet_learn import genome as genomes, runs
 
 HORIZONS = (1, 5, 10)
 
 
 def default_device() -> str:
-    """The Mac's GPU (MPS) when there is one: about 4x faster than the CPU at batch 1024, 1.6x at 256."""
+    """A GPU when there is one: CUDA (a RunPod pod), or the Mac's (MPS: about 4x faster than its CPU
+    at batch 1024, 1.6x at 256)."""
+    if torch.cuda.is_available():
+        return 'cuda'
     return 'mps' if torch.backends.mps.is_available() else 'cpu'
+
+
+def score(rows) -> float:
+    """One number for a model: its error relative to the naive baselines, over the continuous heads
+    (and the pose change) and the horizons, combined as a geometric mean. Lower is better; under 1 beats
+    them. Geometric, so halving any head's error counts the same whatever its scale: an arithmetic mean
+    was dominated by the pose change 0.1 s ahead, whose near-perfect baseline makes its ratio 2 for a
+    trained model and 25-67 early on, against 0.06-1.3 for the rest (2026-11-01). Ratios that can't be
+    computed (a reading never recorded in the held-out driving) are left out."""
+    continuous = [n for n, (_, binary) in TARGETS.items() if not binary] + ['pose']
+    ratios = np.array([rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9) for n in continuous for h in HORIZONS], dtype=float)
+    return float(np.exp(np.nanmean(np.log(np.maximum(ratios, 1e-9)))))
+
+
+def by_horizon(rows) -> dict:
+    """{'<h>s': {head: ratio to its baseline (AUC for bump and slip)}}, as run records keep them."""
+    return {f'{h / 10:g}s': {n: (rows[(n, h)][0] if n in TARGETS and TARGETS[n][1] else rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9))
+                             for n in list(TARGETS) + ['pose']} for h in HORIZONS}
+
+
+def unused_path(directory: str, prefix: str) -> str:
+    """<directory>/<prefix>-<time>.pt, numbered if a model saved in the same second has it."""
+    base = os.path.join(directory, f'{prefix}-{time.strftime("%Y%m%d-%H%M%S")}')
+    out, k = base + '.pt', 1
+    while os.path.exists(out):
+        k += 1
+        out = f'{base}-{k}.pt'
+    return out
 
 
 def to_torch(batch, device):
@@ -114,20 +150,30 @@ def main():
     parser.add_argument('--iters', type=int, default=50000, help='at most this many iterations')
     parser.add_argument('--patience', type=int, default=2000,
                         help='stop after this many iterations without a better val error')
-    parser.add_argument('--hide', type=float, default=0.05,
-                        help='chance each sensor is hidden from the encoder in a training window (dataset.hide)')
-    # Batch 1024 at 6e-4 beat 256 at 3e-4 on the world model's val error (0.44 vs 0.50, 2026-11-01), and
-    # takes about as long per step on the GPU; the learning rate goes with the batch (sqrt scaling).
-    parser.add_argument('--batch', type=int, default=1024)
-    parser.add_argument('--lr', type=float, default=6e-4)
+    parser.add_argument('--genome', help='a genome JSON (pet_learn.genome); default: the baseline')
+    parser.add_argument('--out-dir', default=os.path.join(data_dir, 'models'))
+    parser.add_argument('--final-steps', help='also score on every window of the sessions in this folder')
+    # The baseline genome's params (its impls' defaults: batch 1024 at 6e-4, hide 0.05, z 64, hidden
+    # 128, weight decay 1e-3); for a plain run only, not with --genome.
+    parser.add_argument('--hide', type=float, help='chance each sensor is hidden from the encoder in a training window (dataset.hide)')
+    parser.add_argument('--batch', type=int)
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--hidden', type=int)
+    parser.add_argument('--z', type=int)
+    parser.add_argument('--weight-decay', type=float)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', default=default_device())
-    parser.add_argument('--hidden', type=int, default=128)
-    parser.add_argument('--z', type=int, default=64)
-    parser.add_argument('--weight-decay', type=float, default=1e-3)
     parser.add_argument('--eval-every', type=int, default=100)
     args = parser.parse_args()
+    flags = {'arch': {'z': args.z, 'hidden': args.hidden}, 'optim': {'lr': args.lr, 'weight_decay': args.weight_decay, 'batch': args.batch},
+             'batcher': {'hide': args.hide}}
+    overrides = {axis: {k: v for k, v in params.items() if v is not None} for axis, params in flags.items()}
+    if args.genome and any(overrides.values()):
+        sys.exit("a genome sets its own params: don't combine --genome with --batch, --lr, --hide, --hidden, --z or --weight-decay")
+    genome = genomes.load(args.genome, overrides)
     record = runs.new_record('world', parser, args)
+    record['genome'] = genome
+    print(f'genome: {genomes.recipe(genome)}')
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -144,32 +190,29 @@ def main():
     runs.add_sessions(record, paths, sessions)
     record['windows'] = {part: sum(len(getattr(s, part)) for s in sessions) for part in ('train', 'val', 'test')}
 
-    model = WorldModel(sessions[0].inputs.shape[1], z_dim=args.z, hidden=args.hidden).to(args.device)
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    arch, arch_params = genomes.impl(genome, 'arch')
+    objective, objective_params = genomes.impl(genome, 'objective')
+    optim, optim_params = genomes.impl(genome, 'optim')
+    batcher, batcher_params = genomes.impl(genome, 'batcher')
+    model = arch.build(sessions[0].inputs.shape[1], **arch_params).to(args.device)
+    opt, scheduler, batch_size = optim.make(model.parameters(), **optim_params)
+    next_batch = batcher.make(sessions, train, norm, rng, batch_size, **batcher_params)
     best, best_state, best_it, started, stopped = float('inf'), None, 0, time.time(), None
-    continuous = [n for n, (_, binary) in TARGETS.items() if not binary] + ['pose']
     for it in range(1, args.iters + 1):
-        pick = rng.integers(0, len(train), args.batch)
-        by_session = {}
-        for j in pick:
-            by_session.setdefault(train[j][0], []).append(train[j][1])
-        # Half of each batch mirrored left to right.
-        parts = [window_batch(sessions[i], np.array(st), norm, mirrored=bool(m), rng=rng, hide_p=args.hide)
-                 for i, st in by_session.items() for m, st in enumerate(np.array_split(np.array(st), 2)) if len(st)]
-        batch = to_torch({k: np.concatenate([p[k] for p in parts]) for k in parts[0]}, args.device)
-        loss, _ = world_loss(model, batch)
+        batch = to_torch(next_batch(), args.device)
+        loss, _ = objective.loss(model, batch, **objective_params)
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
         opt.step()
+        if scheduler is not None:
+            scheduler.step()
         if it % args.eval_every == 0:
             if not torch.isfinite(loss):  # the weights are gone; the best model so far (before it) is kept
                 stopped = f'non-finite training loss at iteration {it}'
                 print(f'stopped: {stopped}')
                 break
-            rows = evaluate(model, sessions, norm, args.device)
-            # Held-out error, relative to the baselines, averaged over continuous heads and horizons.
-            val = float(np.nanmean([rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9) for n in continuous for h in HORIZONS]))
+            val = score(evaluate(model, sessions, norm, args.device))
             if np.isfinite(val) and val < best:
                 best, best_state, best_it = val, {k: v.clone() for k, v in model.state_dict().items()}, it
             if it % (args.eval_every * 5) == 0:
@@ -194,14 +237,24 @@ def main():
         binary = name in TARGETS and TARGETS[name][1]
         cell = (lambda m, b: m) if binary else (lambda m, b: m / max(b, 1e-9))
         print(f'{name:10s}' + ''.join(f'{cell(*rows[(name, h)]):>10.2f}' for h in HORIZONS))
-    record.update(iterations=it, best_iteration=best_it, stopped=stopped, val_score=best, seconds=round(time.time() - started),
-                  results={f'test_{h / 10:g}s': {n: (rows[(n, h)][0] if n in TARGETS and TARGETS[n][1]
-                                                     else rows[(n, h)][0] / max(rows[(n, h)][1], 1e-9))
-                                                 for n in list(TARGETS) + ['pose']} for h in HORIZONS})
-    os.makedirs(os.path.join(data_dir, 'models'), exist_ok=True)
-    out = os.path.join(data_dir, 'models', f'world-{time.strftime("%Y%m%d-%H%M%S")}.pt')
+    results = {f'test_{h}': v for h, v in by_horizon(rows).items()}
+    record.update(iterations=it, best_iteration=best_it, stopped=stopped, val_score=best, test_score=score(rows),
+                  seconds=round(time.time() - started))
+    if args.final_steps:
+        final_paths = sorted(p for p in glob.glob(os.path.join(args.final_steps, '*.npz')) if not p.endswith('.maps.npz'))
+        finals = [SessionData(dict(np.load(p))) for p in final_paths]
+        if not final_paths or not sum(len(s.all) for s in finals):
+            sys.exit(f'no usable sessions in {args.final_steps} for the final split')
+        final_rows = evaluate(model, finals, norm, args.device, part='all')
+        record['final_score'] = score(final_rows)
+        record['final_sessions'] = runs.session_list(final_paths, finals)
+        results.update({f'final_{h}': v for h, v in by_horizon(final_rows).items()})
+        print(f'final ({len(final_paths)} sessions recorded after the search began): error / baseline {record["final_score"]:.3f}')
+    record['results'] = results
+    os.makedirs(args.out_dir, exist_ok=True)
+    out = unused_path(args.out_dir, 'world')
     runs.save(out, {'model': {k: v.cpu() for k, v in model.state_dict().items()}, 'mean': norm.mean, 'std': norm.std,
-                    'input_dim': sessions[0].inputs.shape[1], 'z': args.z, 'hidden': args.hidden}, record)
+                    'input_dim': sessions[0].inputs.shape[1], 'z': model.z_dim, 'genome': genome}, record)
     print(f'saved {out} (and its run record, .json)')
 
 
