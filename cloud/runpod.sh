@@ -5,7 +5,10 @@
 # bounded waits, the driver check) is kept; the project-specific parts are turtlebot's.
 #
 # A pod is a Docker container. You get `root` over SSH on an EXPOSED PUBLIC PORT (not user@ip:22);
-# the ssh public key is injected through the pod's PUBLIC_KEY environment variable.
+# Public keys reach the pod through its PUBLIC_KEY environment variable: RUNPOD_SSH_KEY's (or
+# RUNPOD_PUBKEY_FILE, or an ~/.ssh/id_ed25519 / id_rsa found), else every key in your ssh agent
+# (`ssh-add -L`), so a key added locally just works. RunPod does not add the account's console keys
+# to a pod created this way without PUBLIC_KEY (2026-11-01: ssh was refused).
 #
 # Subcommands (each prints machine-parseable results on the LAST stdout line):
 #   types [--available]    GPU types with price + stock (filter: $RUNPOD_TYPES_FILTER)
@@ -35,10 +38,15 @@
 #                       CUDA userspace and the driver matter: uv installs learn's own Python + torch)
 #   RUNPOD_DISK_GB      default 60 (a CUDA torch venv is ~12 GB, the uv cache about as much again)
 #   RUNPOD_POD_NAME     default tb-wave (the tb- prefix tells turtlebot's pods apart in `reap`)
-#   RUNPOD_ALLOWED_CUDA host driver CUDA versions to accept: default 13.0,13.1,13.2. learn/ locks
-#                       torch 2.15.0, whose only CUDA builds are CUDA 13 (CUDA-12 wheels stop at
-#                       2.14.1), and swapping torch versions would change the scores
-#   RUNPOD_SSH_KEY / RUNPOD_PUBKEY_FILE   ssh identity (auto-discovered otherwise)
+#   RUNPOD_ALLOWED_CUDA host driver CUDA versions RunPod may place the pod on, e.g. 13.0, or "any"
+#                       (the default) to send no filter. The API accepts nothing newer than 13.0 (the
+#                       top of its enum, checked 2026-11-01) and that filter excluded hosts on newer
+#                       drivers: with it no 4090 was available, without it the first host had 13.2.
+#   RUNPOD_MIN_CUDA     default 13.0: launch re-rolls any pod whose driver is older, whatever the
+#                       filter. learn/ locks torch 2.15.0, whose only CUDA builds are CUDA 13 (CUDA-12
+#                       wheels stop at 2.14.1), and swapping torch versions would change the scores.
+#                       (Before 2026-11-01's change the minimum was the filter's first version; now it's only this.)
+#   RUNPOD_SSH_KEY / RUNPOD_PUBKEY_FILE   ssh identity (optional: auto-discovered, else the agent's keys)
 
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,19 +64,21 @@ IMAGE="${RUNPOD_IMAGE:-runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04}
 DISK_GB="${RUNPOD_DISK_GB:-60}"
 POD_NAME="${RUNPOD_POD_NAME:-tb-wave}"
 TYPES_FILTER="${RUNPOD_TYPES_FILTER:-4090|5090|A100|H100|L40|A40|RTX 6000}"
-ALLOWED_CUDA="${RUNPOD_ALLOWED_CUDA:-13.0,13.1,13.2}"
-MIN_CUDA="${ALLOWED_CUDA%%,*}"
+ALLOWED_CUDA="${RUNPOD_ALLOWED_CUDA:-any}"
+MIN_CUDA="${RUNPOD_MIN_CUDA:-13.0}"
+[[ "$MIN_CUDA" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "ERROR: RUNPOD_MIN_CUDA must look like 13 or 13.0, got '$MIN_CUDA'" >&2; exit 1; }
 TMUX_SESSION="tb-wave"
 LEDGER="${RUNPOD_LEDGER:-$HOME/.runpod-pods.log}"
 
 RUNPOD_SSH_KEY="${RUNPOD_SSH_KEY:-}"
-if [ -z "$RUNPOD_SSH_KEY" ]; then
+SSH_KEY_FOUND=""
+if [ -z "$RUNPOD_SSH_KEY" ]; then  # only a key with its .pub beside it; otherwise the agent's keys
     for c in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
-        [ -f "$c" ] && RUNPOD_SSH_KEY="$c" && break
+        [ -f "$c" ] && [ -f "$c.pub" ] && RUNPOD_SSH_KEY="$c" && SSH_KEY_FOUND=1 && break
     done
 fi
-# accept-new: every pod is a fresh host key. The key is offered, not pinned: RunPod also honours the
-# account-level console key, and a pod can accept that one instead (RUNPOD_SSH_PIN=1 pins anyway).
+# accept-new: every pod is a fresh host key. The key is offered, not pinned: the agent's keys are
+# tried too (RUNPOD_SSH_PIN=1 offers only RUNPOD_SSH_KEY).
 # Keepalive 30 s x 3 fails a dead peer in 90 s; ConnectTimeout bounds an unanswered handshake.
 SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=30${RUNPOD_SSH_KEY:+ -i $RUNPOD_SSH_KEY}${RUNPOD_SSH_PIN:+ -o IdentitiesOnly=yes}"
 
@@ -120,10 +130,15 @@ rest() {
     fi
 }
 
-_pubkey() {
+_pubkey() {  # the public key(s) to inject, one per line: the configured key's, else the ssh agent's
     local f="${RUNPOD_PUBKEY_FILE:-${RUNPOD_SSH_KEY:+$RUNPOD_SSH_KEY.pub}}"
-    [ -n "$f" ] && [ -f "$f" ] || die "no ssh public key (set RUNPOD_PUBKEY_FILE, or RUNPOD_SSH_KEY with a .pub beside it)"
-    cat "$f"
+    if [ -n "$f" ]; then
+        [ -f "$f" ] || die "no ssh public key at $f (set RUNPOD_PUBKEY_FILE to it, or unset RUNPOD_SSH_KEY to use the agent's keys)"
+        cat "$f"; return
+    fi
+    local keys; keys=$(ssh-add -L 2>/dev/null | grep -E '^(ssh-|ecdsa-|sk-)' || true)
+    [ -n "$keys" ] || die "no ssh key: add one to your agent (ssh-add), or set RUNPOD_SSH_KEY"
+    echo "$keys"
 }
 
 _host() {
@@ -174,23 +189,33 @@ _await_ssh() {
         sleep 10
     done
     log "waiting for sshd at $ip:$port"
-    for _ in $(seq 1 30); do _ssh_to "$ip" "$port" true 2>/dev/null && break; sleep 10; done
+    local err=""
+    for _ in $(seq 1 30); do err=$(_ssh_to "$ip" "$port" true 2>&1) && { err=""; break; }; sleep 10; done
+    [ -z "$err" ] || echo "    ssh still failing after 30 tries: $(printf '%s' "$err" | tail -2 | tr '\n' ' ')" >&2
     echo "$id $ip $port"
 }
 
 _deploy() {
-    local pubkey; pubkey=$(_pubkey | tr -d '\n')
-    log "deploying 1x '$GPU_TYPE' ($CLOUD), disk=${DISK_GB}GB, allowedCuda=[$ALLOWED_CUDA]"
+    # || exit: set -e is off inside $(...), and the caller runs _deploy in one, so without it a missing
+    # key would still deploy (and bill) a pod nobody can reach
+    local pubkey keysrc; pubkey=$(_pubkey) || exit 1
+    local src="${RUNPOD_PUBKEY_FILE:-${RUNPOD_SSH_KEY:+$RUNPOD_SSH_KEY.pub}}"
+    [ -n "$src" ] || src="the ssh agent"
+    [ -z "$SSH_KEY_FOUND" ] || [ -n "${RUNPOD_PUBKEY_FILE:-}" ] || src="$src (found automatically)"
+    keysrc="$(printf '%s\n' "$pubkey" | grep -c .) public key(s) from $src"
+    log "deploying 1x '$GPU_TYPE' ($CLOUD), disk=${DISK_GB}GB, allowedCuda=[$ALLOWED_CUDA], ssh key: $keysrc"
     local body r id
     body=$(jq -n --arg name "$POD_NAME" --arg img "$IMAGE" --arg cloud "$CLOUD" --arg gt "$GPU_TYPE" \
         --argjson disk "$DISK_GB" --arg pk "$pubkey" --arg cuda "$ALLOWED_CUDA" \
         '{name:$name, imageName:$img, cloudType:$cloud, computeType:"GPU",
           gpuCount:1, gpuTypeIds:[$gt], volumeInGb:0, containerDiskInGb:$disk,
-          ports:["22/tcp"], env:{PUBLIC_KEY:$pk},
-          allowedCudaVersions:($cuda | split(","))}')
+          ports:["22/tcp"], env:{PUBLIC_KEY:$pk}}
+         + (if $cuda == "any" then {} else {allowedCudaVersions:($cuda | split(",") | map(gsub(" "; "")))} end)')
     r=$(rest POST /pods "$body")
-    id=$(echo "$r" | jq -r '.id // empty')
-    [ -n "$id" ] || { echo "$r" | jq -r '.error // .message // .' >&2; die "deploy failed"; }
+    id=$(echo "$r" | jq -r 'objects | .id // empty' 2>/dev/null || true)
+    # errors come back as an object or as an array of them (validation): print either, or the raw text
+    [ -n "$r" ] || r="(empty response)"
+    [ -n "$id" ] || { echo "$r" | jq -r 'if type == "array" then .[] else . end | if type == "object" then (.error // .message // tostring) else tostring end' >&2 2>/dev/null || echo "$r" >&2; die "deploy failed"; }
     _ledger "$id"   # recorded the instant it exists: if anything later dies, `reap` still sees it
     echo "$id"
 }
@@ -221,6 +246,13 @@ _terminate_confirmed() {
     return 1
 }
 
+_version_at_least() {  # <have> <need>: major, then minor, as integers (13.10 is newer than 13.2)
+    local hM hm nM nm
+    IFS=. read -r hM hm <<< "$1"; IFS=. read -r nM nm <<< "$2"
+    hm=${hm:-0}; nm=${nm:-0}
+    [ "$hM" -gt "$nM" ] || { [ "$hM" -eq "$nM" ] && [ "$hm" -ge "$nm" ]; }
+}
+
 # The id of a pod being launched goes to $RUNPOD_ID_FILE (when set) the instant it exists, so a caller
 # that dies or is interrupted mid-launch still knows what to stop. A pod that never becomes usable is
 # terminated here, confirmed, before anything else is deployed.
@@ -240,7 +272,7 @@ cmd_launch() {
             die "launch: couldn't read $pid's driver version, and its termination is NOT confirmed: $0 terminate $pid"
         fi
         log "host driver CUDA: $drv (need >= $MIN_CUDA)"
-        if awk -v d="$drv" -v m="$MIN_CUDA" 'BEGIN{exit !(d >= m)}'; then echo "$pid $ip $port"; return; fi
+        if _version_at_least "$drv" "$MIN_CUDA"; then echo "$pid $ip $port"; return; fi
         log "driver too old on $pid (try $try/4) — terminating and re-rolling"
         _terminate_confirmed "$pid" || die "re-roll: $pid not confirmed stopped; not deploying another"
         sleep 5

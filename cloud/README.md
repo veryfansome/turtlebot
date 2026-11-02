@@ -36,9 +36,11 @@ uv run python ../cloud/wave.py ingest cands-1                  # into the evolve
 - Results come home on every poll, so a stop loses little.
 - Deploys are never retried (a retried deploy is a second, untracked pod), every wait is bounded by wall clock, and `reap` finds a pod an interrupted launch left behind.
 
+**SSH.** Nothing to configure: the pod gets the public keys in your ssh agent (`ssh-add -L`) through its `PUBLIC_KEY` variable, and ssh logs in with the agent. `RUNPOD_SSH_KEY` (a private key, with its `.pub` beside it) or an `~/.ssh/id_ed25519` / `id_rsa` with its `.pub` beside it is used instead when present. With no key at all, nothing is deployed. The keys in your RunPod account settings aren't enough: a pod created through the API without `PUBLIC_KEY` refused ssh (2026-11-01).
+
 **Secrets.** `RUNPOD_API_KEY` and the Hugging Face token come from `~/.runpod.env`; neither is ever printed. The pod gets `HF_TOKEN` (or `HF_READ_TOKEN`, if set: a read-only one), as the sibling projects' pods do, through ssh's stdin into a mode-600 file on the pod, never on a command line; terminating the pod deletes it. The GraphQL API takes its key in the URL, so it can show in a local process listing while a call runs.
 
-**Hosts.** `learn/` locks torch 2.15.0, whose only CUDA builds need a CUDA 13 driver (CUDA 12 wheels stop at 2.14.1), so `launch` re-rolls any pod whose driver is older rather than swap torch versions, which would change the scores.
+**Hosts.** `learn/` locks torch 2.15.0, whose only CUDA builds need a CUDA 13 driver (CUDA 12 wheels stop at 2.14.1), so `launch` re-rolls any pod whose driver is older rather than swap torch versions, which would change the scores. The deploy sends no CUDA filter by default (`RUNPOD_ALLOWED_CUDA=any`) and leaves it to the re-roll (a too-old host costs a few minutes of pod time before it's terminated): RunPod's API accepts filters only up to 13.0 (its enum, checked 2026-11-01), and a 13.0 filter left no RTX 4090 available while the first unfiltered host had a 13.2 driver (2026-11-01). The minimum driver is `RUNPOD_MIN_CUDA` (default 13.0). Each re-roll is a pod billed until it's terminated: usually a few minutes; at worst about 35 (up to 15 waiting for RunPod to open a port, then up to 20 for ssh), up to 4 tries.
 
 **Comparing results.** Each record carries `env`, e.g. `runpod-geforce-rtx-4090-c3` (the GPU and how many trainings shared it: thread counts change float results). Scores compare only within one env; the evolve search selects within `fitness.selection_env`.
 
