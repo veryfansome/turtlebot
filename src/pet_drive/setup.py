@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'safety = pet_drive.safety_node:main',
+            'pickup = pet_drive.pickup_node:main',
         ],
     },
 )

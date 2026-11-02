@@ -38,6 +38,7 @@ TOPICS = [
     '/cmd_vel',  # what the wheels were told, by the safety layer or the controller
     '/drive/cmd_vel',  # what a driver asked the safety layer for
     '/drive/safety',  # why the safety layer changed it
+    '/drive/slam_reset',  # SLAM started a fresh map after a pickup: positions before and after don't compare
     '/joy',  # the controller: whether a person was driving
 ]
 # Off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, enough to
@@ -64,6 +65,8 @@ def generate_launch_description():
         ),
         Node(package='pet_drive', executable='safety', output='screen',
              condition=IfCondition(LaunchConfiguration('safety'))),
+        # After a pickup, SLAM's map no longer matches where the robot is: start a fresh one.
+        Node(package='pet_drive', executable='pickup', output='screen'),
         # Ctrl-C reaches it through ros2 launch and it closes the bag cleanly.
         ExecuteProcess(cmd=record + TOPICS, output='screen', condition=UnlessCondition(LaunchConfiguration('camera'))),
         ExecuteProcess(cmd=record + TOPICS + CAMERA_TOPICS, output='screen',

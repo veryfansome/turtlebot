@@ -9,7 +9,7 @@ def series(times_s, values):
 
 def test_steps_continue_after_the_scans_stop_with_the_scan_marked_missing():
     names = ('scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
-             'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard')
+             'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset')
     s = {name: series([], []) for name in names}
     scan_t = np.arange(0, 2.0, 0.1)  # scans for 2 s ...
     odom_t = np.arange(0, 5.0, 0.05)  # ... odometry for 5 s

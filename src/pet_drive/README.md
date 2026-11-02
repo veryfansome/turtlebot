@@ -30,13 +30,21 @@ When it stops the robot for a reason, it tells whoever is nearby (`feedback`, on
 | Picked up | three rising tones | blue |
 | Driving again after one of the last three | two rising blips | back to normal |
 
-The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving, except two things: one long note once when it starts and the base is listening (so you know a recording has begun), and two low beeps when you press the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)), so you know the press was seen.
+The tones and colours are in [pet_drive/feedback.py](pet_drive/feedback.py). Nothing plays while nobody is driving, except:
+
+- **Recording started:** one long note, once the base is listening.
+- **Lidar lost:** the lidar silent tone (without the red ring) when scans stop arriving for over 2 s while off the dock, repeated every 20 s, then the two rising blips when they're back. It warns that a recording has lost the lidar. The lidar turning itself off on the dock doesn't count.
+- **Rescue noted:** two low beeps when you press the controller's rescue button (Y, just before freeing a stuck robot, see [Recording driving sessions](#recording-driving-sessions)), so you know the press was seen.
 
 Hazards come from the base through the `pi/create3-relays` ops unit, which must be applied.
 
+## After a pickup
+
+SLAM tracks the robot mostly by wheel motion, and the wheels don't see it being carried, so after a pickup its map no longer matches where the robot is. The pickup node ([pet_drive/pickup_node.py](pet_drive/pickup_node.py)) handles it as the explorer does: when the base reports the robot picked up, it pauses SLAM (the view from mid-air shouldn't go into the map); 1 s after it's set down, it resets SLAM to a fresh map, as if a new session started, and announces it on `/drive/slam_reset`. Training treats positions before and after a reset as on different maps.
+
 ## Recording driving sessions
 
-`launch/record.launch.py` starts SLAM, the safety layer and `ros2 bag record` (MCAP) into a new directory under `~/drives/`. It drives nothing itself: drive with the controller, or have a driver publish on `drive/cmd_vel`. From the Mac:
+`launch/record.launch.py` starts SLAM, the safety layer, the pickup node and `ros2 bag record` (MCAP) into a new directory under `~/drives/`. It drives nothing itself: drive with the controller, or have a driver publish on `drive/cmd_vel`. From the Mac:
 
 ```bash
 ops/field-test.sh start record    # preflight checks, then record in the background
@@ -60,6 +68,7 @@ What's recorded, and why:
 | `/tf`, `/tf_static`, `/map` | Where it is: SLAM's `map` → `odom` is movement measured by SLAM, not the wheels |
 | `/cmd_vel` | What the wheels were told, by the safety layer or the controller |
 | `/drive/cmd_vel`, `/drive/safety` | What a driver asked for, and why the safety layer changed it |
+| `/drive/slam_reset` | SLAM started a fresh map after a pickup: positions before and after it are on different maps |
 | `/joy` | The controller: whether a person was driving, and rescues (press Y just before freeing a stuck robot) |
 
 `camera:=true` adds the camera's preview. It's off by default: the robot only offers raw frames, about 5-6 MB/s over Wi-Fi at 30 Hz, which risks losing lidar scans. Compressed frames would need a camera change on the Pi.

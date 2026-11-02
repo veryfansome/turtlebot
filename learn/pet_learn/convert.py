@@ -48,10 +48,12 @@ STEP_FIELDS = {
     'stall': 'the base reported a wheel stall during this step',
     'cliff_or_drop': 'a cliff or wheel drop was reported during this step',
     'kidnapped': 'picked up',
+    'slam_reset': 'SLAM started a fresh map during this step, after a pickup (/drive/slam_reset): poses before and after are on different maps',
     'docked': 'on the dock',
     'battery': 'battery fraction',
     'pose': "SLAM pose in the map: x, y (m), yaw (rad); nan before SLAM has one. While scans are missing, SLAM's last correction carries on with the wheel odometry",
     'known_cells': 'mapped cells (free or occupied) in the latest SLAM map',
+    'map_time': 'when the latest SLAM map arrived (s, like t; nan before the first): after a reset, which map a step would be scored on',
     'new_cells': 'cells that became mapped during this step (0 when the map shrank, e.g. after a SLAM reset)',
 }
 
@@ -60,7 +62,7 @@ def read_session(path: str) -> dict:
     """All the messages the steps are built from, as time-sorted arrays (times in ns)."""
     series = {name: ([], []) for name in (
         'scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
-        'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard')}
+        'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset')}
     meta = {}
     maps = []  # (time, grid, origin, resolution) for each SLAM map
     raw_scans = []  # (time, ranges, angle_min, angle_increment, range_max, frame)
@@ -92,6 +94,8 @@ def read_session(path: str) -> dict:
             if pressed and not rescue_held:
                 add('rescue', t, True)
             rescue_held = pressed
+        elif topic == '/drive/slam_reset':
+            add('slam_reset', t, True)
         elif topic == '/odom':
             add('odom', t, (msg.twist.twist.linear.x, msg.twist.twist.angular.z))
         elif topic == '/wheel_vels':
@@ -221,6 +225,7 @@ def build_steps(s: dict) -> dict:
         'docked': latest('dock', False).astype(bool),
         'battery': latest('battery', np.nan).astype(np.float32),
         'rescue': during_step('rescue', lambda v: v),
+        'slam_reset': during_step('slam_reset', lambda v: v),
         'stall': during_step('hazard', lambda h: h[0] == HAZARD_TYPES['stall']),
         'cliff_or_drop': during_step('hazard', lambda h: h[0] in (HAZARD_TYPES['cliff'], HAZARD_TYPES['wheel_drop'])),
     }
@@ -247,6 +252,10 @@ def build_steps(s: dict) -> dict:
             pose[i] = compose(map_odom[i], odom_base[i])
     steps['pose'] = pose
 
+    map_times = s['map'][0]
+    latest_map = latest_before(map_times, grid)
+    steps['map_time'] = np.where(latest_map >= 0, (map_times[np.maximum(latest_map, 0)] - start) / 1e9, np.nan) if len(map_times) \
+        else np.full(n, np.nan)
     known = latest('map', 0).astype(np.int64)
     steps['known_cells'] = known
     steps['new_cells'] = np.maximum(np.diff(known, prepend=known[0]), 0)
@@ -268,7 +277,8 @@ def summarize(name: str, steps: dict, meta: dict) -> str:
         f'  driven {driven:.1f} m (SLAM), a person driving {steps["joy_active"].mean() * 100:.0f}% of the time',
         f'  bumps {int(steps["bump"].any(axis=1).sum())} (left {int(steps["bump"][:, 0].sum())}, '
         f'centre {int(steps["bump"][:, 1].sum())}, right {int(steps["bump"][:, 2].sum())}), '
-        f'stall reports in {int(steps["stall"].sum())} steps, rescues {int(steps["rescue"].sum())}',
+        f'stall reports in {int(steps["stall"].sum())} steps, rescues {int(steps["rescue"].sum())}, '
+        f'SLAM resets after pickups {int(steps["slam_reset"].sum())}',
         f'  told to go forward but not moving over the floor: {pushing.sum() * dt:.0f} s; '
         f'wheel slip reported: {steps["slipping"].sum() * dt:.0f} s',
         f'  mapped {area:.1f} m² at most; battery {battery[0] * 100:.0f}% → {battery[-1] * 100:.0f}%',

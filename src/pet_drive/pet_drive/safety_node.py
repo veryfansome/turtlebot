@@ -6,7 +6,7 @@ nobody is driving it goes quiet, so the controller can still drive the robot dir
 """
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import TwistStamped
-from irobot_create_msgs.msg import AudioNote, AudioNoteVector, HazardDetectionVector, KidnapStatus, LedColor, LightringLeds
+from irobot_create_msgs.msg import AudioNote, AudioNoteVector, DockStatus, HazardDetectionVector, KidnapStatus, LedColor, LightringLeds
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -14,7 +14,7 @@ from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import Joy, LaserScan
 from std_msgs.msg import String
 
-from pet_drive.feedback import RESCUE_NOTED, STARTED, announcement, rescue_pressed
+from pet_drive.feedback import RESCUE_NOTED, RESUMED, STARTED, STOPS, LidarWatch, announcement, rescue_pressed
 from pet_drive.safety import Limits, SafetyGate
 
 # Zero commands sent after the driver stops, so the robot stops even if one is lost.
@@ -39,6 +39,7 @@ class SafetyNode(Node):
         self.reason = None
         self.ring_overridden = False
         self.rescue_held = False
+        self.lidar_watch = LidarWatch()
 
         self.cmd_pub = self.create_publisher(TwistStamped, 'cmd_vel', 10)
         # Why the last command was changed ('ok' if it wasn't), for logs and the recorder.
@@ -50,6 +51,8 @@ class SafetyNode(Node):
         self.create_subscription(HazardDetectionVector, 'hazard_detection', self.on_hazards, qos_profile_sensor_data)
         self.create_subscription(KidnapStatus, 'kidnap_status', self.on_kidnap, qos_profile_sensor_data)
         self.create_subscription(Joy, 'joy', self.on_joy, qos_profile_sensor_data)
+        self.create_subscription(DockStatus, 'dock_status', self.on_dock, qos_profile_sensor_data)
+        self.create_timer(0.5, self.check_lidar)
         self.create_timer(1.0 / rate, self.tick)
         if self.feedback:
             self.listener_seen = 0
@@ -64,6 +67,23 @@ class SafetyNode(Node):
 
     def on_scan(self, msg: LaserScan):
         self.gate.on_scan(self.now())
+        self.lidar_watch.on_scan(self.now())
+
+    def on_dock(self, msg: DockStatus):
+        self.lidar_watch.on_docked(msg.is_docked, self.now())
+
+    def check_lidar(self):
+        event = self.lidar_watch.check(self.now())
+        # While a driver is driving, the safety layer's own lidar-silent stop already plays these.
+        audible = self.feedback and self.reason in (None, 'idle')
+        if event == 'silent':
+            self.get_logger().warn(f'Lidar silent for {self.now() - self.lidar_watch.last_scan:.0f} s while undocked')
+            if audible:
+                self.play(STOPS['lidar silent'][0])
+        elif event == 'back':
+            self.get_logger().info('Lidar back')
+            if audible:
+                self.play(RESUMED)
 
     def on_hazards(self, msg: HazardDetectionVector):
         self.gate.on_hazards([d.type for d in msg.detections], self.now())
@@ -79,7 +99,7 @@ class SafetyNode(Node):
             return
         self.listener_seen += 1
         if self.listener_seen >= START_TONE_WAIT:
-            self.announce(STARTED, None)
+            self.play(STARTED)
             self.get_logger().info('Start tone played')
             self.start_timer.cancel()
 
@@ -88,7 +108,7 @@ class SafetyNode(Node):
         if pressed:
             self.get_logger().info('Rescue button pressed')
             if self.feedback:
-                self.announce(RESCUE_NOTED, None)
+                self.play(RESCUE_NOTED)
 
     def tick(self):
         now = self.now()
@@ -123,13 +143,18 @@ class SafetyNode(Node):
             else:
                 self.get_logger().warn(f'Drive: {reason}')
 
+    def play(self, notes):
+        """Tones only: the light ring stays as it is (a stop's colour, say)."""
+        audio = AudioNoteVector(append=False)
+        for frequency, seconds in notes:
+            audio.notes.append(AudioNote(
+                frequency=frequency, max_runtime=Duration(sec=int(seconds), nanosec=int(seconds % 1 * 1e9))))
+        self.audio_pub.publish(audio)
+
     def announce(self, notes, colour):
+        """A stop's tones and colour (colour None gives the light ring back to the robot)."""
         if notes:
-            audio = AudioNoteVector(append=False)
-            for frequency, seconds in notes:
-                audio.notes.append(AudioNote(
-                    frequency=frequency, max_runtime=Duration(sec=int(seconds), nanosec=int(seconds % 1 * 1e9))))
-            self.audio_pub.publish(audio)
+            self.play(notes)
         if colour is not None:
             ring = LightringLeds(override_system=True)
             ring.leds = [LedColor(red=colour[0], green=colour[1], blue=colour[2]) for _ in range(6)]
