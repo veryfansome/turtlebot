@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Run a stack on the VM in the background, from the Mac:
 #   ops/field-test.sh start record [args...]  SLAM + safety layer + a bag in ~/drives/ (drives nothing itself)
-#   ops/field-test.sh start explore [args...] SLAM + Nav2 + explorer (paused; DRIVES THE ROBOT)
 #   ops/field-test.sh status                  running or not, and the latest lines (or the bag's size)
 #   ops/field-test.sh logs [lines]            the end of the latest run's log (default 40 lines)
 #   ops/field-test.sh save-map                save the SLAM map to ~/maps/<run>/ on the VM
-#   ops/field-test.sh stop                    save the map, Ctrl-C the stack (the explorer cancels its goal), make sure it's gone
+#   ops/field-test.sh stop                    save the map, Ctrl-C the stack, make sure it's gone
 #   ops/field-test.sh estop [on|off]          the base's e-stop: on cuts drive motor power (default), off restores it
 # Logs are kept in ~/field-tests/ on the VM, maps in ~/maps/. stop and estop are always safe to run.
 set -euo pipefail
@@ -27,7 +26,7 @@ running() { [[ -f $pidfile ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 latest_log() { ls -t "$dir"/*.log 2>/dev/null | head -1 || true; }
 first() { timeout 8 ros2 topic echo --once "$1" --field "$2" 2>/dev/null | head -1; }
 
-# Save the running SLAM map next to the run's name: map.pgm/map.yaml (for Nav2 to navigate on) and
+# Save the running SLAM map next to the run's name: map.pgm/map.yaml (an occupancy grid, e.g. for Nav2) and
 # map.posegraph/map.data (slam_toolbox's full state, to continue mapping from it later).
 save_map() {
   local log name out
@@ -46,8 +45,7 @@ case $action in
     mode=${1:-}
     case $mode in
       record) launch=(pet_drive record.launch.py) ;;
-      explore) launch=(pet_explorer explore.launch.py) ;;
-      *) echo "usage: ops/field-test.sh start record|explore [launch args...]" >&2; exit 2 ;;
+      *) echo "usage: ops/field-test.sh start record [launch args...]" >&2; exit 2 ;;
     esac
     shift
     if running; then echo "already running (pid $(cat "$pidfile")); stop it first" >&2; exit 1; fi
@@ -63,21 +61,21 @@ case $action in
     [[ -n $scan ]] || { echo "preflight: no /scan from the lidar" >&2; exit 1; }
     stamp=$(date +%Y%m%d-%H%M%S)
     log=$dir/$stamp.log
-    [[ $mode != record ]] || set -- out:="$HOME/drives/$stamp" "$@"
+    set -- out:="$HOME/drives/$stamp" "$@"
     # setsid: own session, so the run outlives this SSH connection and can be stopped as a group.
     # A background job starts with Ctrl-C (SIGINT) ignored, and ros2 launch keeps it that way, so
-    # restore it: stop relies on it for the explorer to cancel its goal and everything to exit cleanly.
+    # restore it: stop relies on it for every node to exit cleanly (the bag closes).
     setsid nohup env --default-signal=INT ros2 launch "${launch[@]}" "$@" > "$log" 2>&1 < /dev/null &
     echo $! > "$pidfile"
     sleep 5
     if ! running; then echo "the stack exited right away:" >&2; tail -20 "$log" >&2; exit 1; fi
     echo "started $mode (pid $(cat "$pidfile")), battery $pct%, log $log"
-    [[ $mode != record ]] || echo "recording to ~/drives/$stamp"
+    echo "recording to ~/drives/$stamp"
     ;;
   status)
     if running; then echo "running (pid $(cat "$pidfile")), log $(latest_log)"; else echo "not running"; fi
     log=$(latest_log)
-    [[ -z $log ]] || grep -E '\[(explorer|drive_safety)\]' "$log" | tail -n 10 || true
+    [[ -z $log ]] || grep -E '\[(drive_safety|pickup)\]' "$log" | tail -n 10 || true
     bag=~/drives/$(basename "${log:-none}" .log)
     [[ ! -d $bag ]] || echo "bag $bag: $(du -sh "$bag" | cut -f1)"
     ;;
@@ -94,7 +92,7 @@ case $action in
     running || { echo "not running"; rm -f "$pidfile"; exit 0; }
     pid=$(cat "$pidfile")
     save_map || true
-    # Ctrl-C to ros2 launch only: it passes it on, and the explorer cancels its Nav2 goal on the way out.
+    # Ctrl-C to ros2 launch only: it passes it on to every node, which exit cleanly (the bag closes).
     kill -INT "$pid"
     for _ in $(seq 1 20); do running || break; sleep 1; done
     if running; then echo "no clean exit after Ctrl-C; terminating" >&2; kill -TERM -- "-$pid"; sleep 3; fi

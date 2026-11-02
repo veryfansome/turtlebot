@@ -1,5 +1,5 @@
 """When the robot is picked up and set down somewhere, SLAM's map no longer matches where it is: SLAM
-tracks it mostly by wheel motion, and the wheels didn't see the carry. So, as the explorer does: pause
+tracks it mostly by wheel motion, and the wheels didn't see the carry. So: pause
 SLAM while it's in the air (the view from mid-air shouldn't go into the map), and once it has been set
 down and settled, reset SLAM to a fresh map, as if a new session started.
 

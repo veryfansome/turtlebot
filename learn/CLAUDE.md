@@ -1,0 +1,13 @@
+# learn/: notes for Claude
+
+Offline learning on the Mac (no ROS): bags to 10 Hz steps (`pet_learn/convert.py`, fields in `STEP_FIELDS`), then a world model (`train_world`) and an IQL driver on its state (`train_driver`). Read [README.md](README.md) and [MODEL.md](MODEL.md) first.
+
+- A uv project: run everything as `(cd learn && uv run ...)`. Tests: `uv run pytest -q`; the RunPod lane's offline tests run from here too: `uv run pytest ../cloud/tests -q`.
+- Train only through the train-model skill. The defaults are the settings (the baseline genome: batch 1024, lr 6e-4, patience 2000, the Mac's GPU). A flag is only for a named experiment.
+- One training at a time (`ps aux | grep '[p]et_learn'`). While one runs, don't change, stash or check out code in `learn/`.
+- Each model in `../data/models/` has a run record (`<model>.json`); compare with `uv run python -m pet_learn.runs`. Compare only with the same data fingerprint and code version, one difference at a time. Report test numbers (90-100% of each session's scored driving), not val numbers.
+- Splits: train 0-80%, val 80-90% (picks the iteration, and is the evolve score), test 90-100%, all over scored driving. Usable = within 60 s of the last scan; scored = within 10 s of a scan, with the wheels powered. Every archived evolve score depends on these: don't change them casually.
+- The input is 88 columns per step (`dataset.inputs`). Changing it means old world models won't load into `train_driver`: retrain. Changing the converter or the steps format means `convert --force`: results before and after don't compare.
+- **The data pin:** `pet_learn.hub push` uploads `data/steps` to the private Hugging Face dataset and pins the revision in `data_source.json` (commit it). The evolve search measures exactly the sessions in `eval/data_manifest.json`; pods fetch only those (`hub pull --manifest`). Newer sessions are the search's final split, not its searched data. Re-pinning the search (`eval.manifest --write`) starts a new measurement epoch: the owner's decision.
+- `pet_learn/genome.py` plus `evolve/chunks/<axis>/baseline_*.py` reproduce the old training bit for bit; keep it that way (`tests/test_genome.py`). Impls are append-only.
+- The evolve search ([evolve/EVOLVE.md](evolve/EVOLVE.md), config `evolve/evolve.json`): `pet_learn/**`, `eval/**`, the config, `pyproject.toml` and `uv.lock` are protected; changing them is harness maintenance outside a round (verify-changes). It's scored on RunPod only, and its noise floor and gen 0 aren't measured yet (`fitness.selection_env` unset). The campaign lives in `veryfansome/turtlebot-evolve`: `uv run python evolve/campaign.py pull` before a round, `push` after (evolve-runpod-round skill).

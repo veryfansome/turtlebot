@@ -8,3 +8,5 @@ data/
 # RunPod lane: pulled results (model checkpoints) and per-wave pod state
 cloud/results/
 cloud/.lane-*
+# A wave's copies of candidate impls: the campaign repo keeps them (this repo is public)
+cloud/waves/*/chunks/

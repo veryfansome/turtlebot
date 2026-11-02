@@ -29,3 +29,5 @@ Revert follows the same steps, with `revert` in place of `apply`.
 - Don't change the Pi's network or Wi-Fi settings, update firmware (Pi or Create 3), run `apt upgrade` on the Pi, touch partitions or boot config, or edit the Create 3's web config. Those stay manual: write down the steps for the user instead.
 - Don't edit files on the Pi or VM directly with `ssh ... sed`/`tee`/editors, even for a quick test. Make a unit.
 - Don't apply or revert without the user's yes in this conversation, even if they approved a similar change before.
+- Don't type, ask for or store the Pi's sudo password: only the user enters it, in their own terminal (when `run.sh` exits 3, give them the command it printed).
+- Create 3 base settings can't be units: the user changes them on its web page. Read the value back afterwards (the `get_parameters` service, as health.sh does) before testing.

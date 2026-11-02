@@ -15,9 +15,9 @@
 #   ssh       <podId>      interactive ssh
 #   bootstrap <podId>      apt deps, the COMMITTED code (git archive HEAD: learn/ + cloud/), uv sync,
 #                          CUDA smoke test
-#   data      <podId>      pull the pinned sessions from the private Hugging Face dataset on the pod
-#                          (learn/data_source.json), with the token written to the pod's ~/.runpod.env
-#                          (never passed on a command line)
+#   data      <podId>      pull the evolve search's sessions (learn/eval/data_manifest.json) at the pinned
+#                          revision (learn/data_source.json) from the private Hugging Face dataset,
+#                          with the token written to the pod's ~/.runpod.env (never on a command line)
 #   wave      <podId> <cloud/waves/NAME>   ship a wave (cloud/wave.py make) and run it in tmux
 #   pull      <podId> <NAME>               rsync the pod's cloud/results/NAME/ home
 #   terminate <podId>      TERMINATE THE POD: what stops billing
@@ -304,7 +304,7 @@ cmd_data() {
     # Through stdin into a 600 file: never on a command line, never in a process listing.
     printf 'HF_TOKEN=%s\n' "$tok" | _ssh_to "$ip" "$port" "umask 077 && cat > ~/.runpod.env"
     log "pulling the pinned sessions on the pod"
-    _ssh_to "$ip" "$port" "export PATH=\"\$HOME/.local/bin:\$PATH\"; cd $POD_REPO/learn && timeout 1200 uv run python -m pet_learn.hub pull --to $POD_REPO/data/steps"
+    _ssh_to "$ip" "$port" "export PATH=\"\$HOME/.local/bin:\$PATH\"; cd $POD_REPO/learn && timeout 1200 uv run python -m pet_learn.hub pull --to $POD_REPO/data/steps --manifest eval/data_manifest.json"
     echo "$id data ok"
 }
 

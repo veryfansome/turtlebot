@@ -19,7 +19,7 @@ Each step (10 Hz) the encoder sees, scaled to similar ranges:
 
 - the lidar, nearest return in each of 60 sectors, capped at 4 m;
 - speed over the floor (optical floor sensor), wheel odometry (forward and turn), wheel speeds, motor currents;
-- whether a bump began, wheel slip, wheel stall;
+- which side a bump began on (left, centre, right), wheel slip, wheel stall;
 - the 7 front IR proximity sensors, as log(1 + reading): they only see the last 10-15 cm and jump steeply up close (see the [roadmap](../ROADMAP.md)), plus whether they were recorded (sessions from before they were relayed have none);
 - the previous drive command (commands take 0.1–0.2 s to show up in the sensors);
 - whether the motors have power (an e-stop cuts it: commands then do nothing, and the world model should learn that rather than be fooled by it);
@@ -53,7 +53,13 @@ The last 20% of each session's scored driving is held out (by time, and of the d
 - [pet_learn/model.py](pet_learn/model.py), [pet_learn/train_world.py](pet_learn/train_world.py): the world model, trained with half of each batch mirrored left to right (physics is symmetric, so this doubles the data honestly). Continuous heads predict the change from the current reading, so "nothing changes" is the default.
 - [pet_learn/goals.py](pet_learn/goals.py), [pet_learn/train_driver.py](pet_learn/train_driver.py): goal-relabeled transitions (70% hindsight goals, 30% random poses in mapped free space; unreachable ones skipped) and IQL trained jointly with the world model. Rewards are scaled by 10 for training: one step's reward is a few hundredths, too small for IQL's advantage weights to tell actions apart.
 
-First results, from one 8½-minute session (2026-10-31), on its held-out last 20%:
+Current results (2026-11-01): world-20261101-173810 and driver-20261101-175456, trained on all 6 sessions (about 80 minutes), batch 1,024 at 6e-4, 88 inputs per step, on each session's held-out test slice:
+
+- World model (val score 0.47): error relative to the baselines at 1 s: wheel speeds 0.06, odometry 0.09, pose change 0.14, floor speed 0.39, IR 0.52, motor currents 0.52, lidar 0.68. Bump AUC 0.89 at 1 s.
+- Values: rank correlation 0.64 with held-out actual returns.
+- Policy, goal 2 m away: forward fastest toward a goal ahead (0.29 m/s, no turn), turns 0.34 rad/s toward one on either side, only 0.12 rad/s toward one back-left or back-right, and not at all for one straight behind. Symmetric, goal-directed for goals ahead and to the side, weak for goals behind. Not ready for the robot.
+
+First results, from one 8½-minute session (2026-10-31), on its held-out last 20% (kept for history):
 
 - World model (128 wide, 10,000 iterations): the robot's own motion is learned well. Error relative to the naive baselines at 1 s: wheel speeds 0.05, odometry 0.27, pose change 0.31. The environment, a little: lidar 0.91, floor speed 0.73, motor currents 0.79. Bumps are anticipated (AUC 0.75-0.9, few held-out bumps so noisy). A wider model overfit within 500 iterations.
 - Values: rank correlation 0.72 with the recorded driving's actual returns.
