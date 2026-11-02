@@ -180,3 +180,43 @@ def test_the_objective_weighs_consistency_as_asked(monkeypatch):
     _, three = objective.loss(model, batch, consistency=3.0)
     assert three['consistency'].item() == pytest.approx(3 * one['consistency'].item(), rel=1e-5)
     assert one['scan'].item() == pytest.approx(three['scan'].item())
+
+
+def test_dropout_can_be_set_per_part_and_each_part_defaults_to_dropout():
+    import torch
+    arch, _ = genomes.impl(genomes.load(), 'arch')
+    drops = lambda seq: [m.p for m in seq if isinstance(m, torch.nn.Dropout)]
+    m = arch.build(88, dropout=0.1, head_dropout=0.0)
+    assert drops(m.encoder) == [0.1, 0.1] and drops(m.dynamics) == [0.1, 0.1]
+    assert drops(m.pose_head) == [] and all(drops(h) == [] for h in m.heads.values())
+    m = arch.build(88, dropout=0.1)  # every part falls back to dropout, the pose head included
+    assert drops(m.encoder) == [0.1, 0.1] and drops(m.dynamics) == [0.1, 0.1] and drops(m.pose_head) == [0.1]
+    assert all(drops(h) == [0.1] for h in m.heads.values())
+    m = arch.build(88, **json.loads('{"dropout": 0.1, "enc_dropout": 0, "head_dropout": 0}'))  # ints, as JSON gives
+    assert drops(m.encoder) == [] and drops(m.dynamics) == [0.1, 0.1] and drops(m.pose_head) == []
+    m = arch.build(88, enc_dropout=0.2, dyn_dropout=0.05)
+    assert drops(m.encoder) == [0.2, 0.2] and drops(m.dynamics) == [0.05, 0.05] and drops(m.pose_head) == []
+    torch.manual_seed(0)
+    a = arch.build(88, enc_dropout=0.0, dyn_dropout=0.0, head_dropout=0.0).state_dict()
+    torch.manual_seed(0)
+    b = arch.build(88).state_dict()
+    assert list(a) == list(b) and all(torch.equal(a[k], b[k]) for k in a)  # zero everywhere: the old model
+    with pytest.raises(ValueError):
+        arch.build(88, dyn_dropout=1.0)
+
+
+def test_train_driver_switches_the_world_models_dropout_off():
+    """train_driver rebuilds the world model from the checkpoint's genome (dropout layers included), so it
+    must put it in eval mode right after loading it and never back. A source check: train_driver's main
+    loop needs real data and minutes to run (a real run is part of verify-changes)."""
+    import torch
+    from pet_learn import train_driver
+    g = genomes.load_dict({'chunks': {'arch': {'impl': 'baseline_mlp', 'params': {'dropout': 0.1}}}})
+    world = train_driver.world_model({'genome': g, 'input_dim': 88, 'z': 64})
+    assert any(isinstance(m, torch.nn.Dropout) for m in world.modules())
+    world.eval()
+    x = torch.randn(4, 88)
+    assert torch.equal(world.encode(x), world.encode(x))  # eval mode: deterministic, dropout off
+    src = open(os.path.join(LEARN, 'pet_learn', 'train_driver.py')).read()
+    load_at = src.index("world.load_state_dict(ckpt['model'])")
+    assert 'world.eval()' in src[load_at:load_at + 600] and 'world.train(' not in src
