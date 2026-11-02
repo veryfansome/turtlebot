@@ -9,7 +9,7 @@ Everything runs on the Mac. Commands below are from the repo root; `learn/` is a
 
 ## Steps
 
-1. **Data.** `ops/pull-drives.sh` (if it fails, say so: don't train on stale data without telling the user), then `(cd learn && uv run python -m pet_learn.convert)` (converts only new sessions). If the converter or the steps format changed, `--force` reconverts every session: say so, because results before and after aren't comparable. Read each session's summary (driving time, rescues, how long the lidar was missing) and tell the user anything odd.
+1. **Data.** `ops/pull-drives.sh` (if it fails, say so: don't train on stale data without telling the user), then `(cd learn && uv run python -m pet_learn.convert)` (converts only new sessions). If the converter or the steps format changed, `--force` reconverts every session: say so, because results before and after aren't comparable. Read each session's summary (driving time, rescues, how long the lidar was missing) and tell the user anything odd. Then `(cd learn && uv run python -m pet_learn.hub push)`: the sessions go to the private Hugging Face dataset RunPod pulls from, and the pinned revision in `learn/data_source.json` changes (commit it with the next change). New sessions don't join the evolve search's pinned data (`learn/eval/data_manifest.json`): they're its final split.
 2. **Train on every session.** Always all of `data/steps/`, new recordings included, unless the user says otherwise. Make sure nothing else is training first (`ps aux | grep pet_learn`): two runs share the CPU and GPU, which skews times.
    ```bash
    (cd learn && uv run python -m pet_learn.train_world)                                       # stops itself when val error stops improving

@@ -132,6 +132,7 @@ class SessionData:
         self.train = starts[starts + h < split]
         self.val = starts[(starts >= split) & (starts + h < test_split)]
         self.test = starts[(starts >= test_split) & (starts + h < end)]
+        self.all = starts  # every usable window: a session held out entirely (the evolve final split)
 
 
 def mirror_inputs(x: np.ndarray) -> np.ndarray:

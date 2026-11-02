@@ -43,6 +43,8 @@ One loop, one combined loss:
 
 ## Validating on recorded data
 
+The world model's one number (`train_world.score`, its `val_score` and `test_score`) is its error relative to the naive baselines, combined over heads and horizons as a geometric mean (an arithmetic mean was dominated by the pose change 0.1 s ahead, whose ratio is far larger than the rest); records from before 2026-11-01's change used the arithmetic mean and don't compare. The same number decides which training iteration is kept.
+
 The last 20% of each session's scored driving is held out (by time, and of the driving rather than of all its steps: a session can end in a long stretch without scans). Its first half (val) picks the world model's best iteration and when to stop; its second half (test) is what's reported, by both the world model and the driver, so picking can't flatter the result. The driver trains on the same first 80%. The world model is judged against naive baselines on it, per head and horizon: "the next reading equals the current one" for sensors, and "keep the current velocity" for the pose change. Beating those clearly, especially on floor speed and the lidar while turning, means the state has learned real dynamics. Values are checked against the actual discounted returns of held-out episodes. The policy can only really be judged on the robot.
 
 ## Code and first results

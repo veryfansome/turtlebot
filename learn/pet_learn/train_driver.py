@@ -33,7 +33,8 @@ from pet_learn.episodes import scored
 from pet_learn.goals import goal_features, relabel
 from pet_learn.maps import SessionMaps
 from pet_learn.model import WorldModel, mlp, world_loss
-from pet_learn.train_world import default_device, to_torch
+from pet_learn.train_world import default_device, to_torch, unused_path
+from pet_learn import genome as genomes
 from pet_learn import runs
 
 GOAL_DIM, ACTION_DIM = 5, 2
@@ -76,6 +77,20 @@ class Driver(nn.Module):
         own = self.actor(torch.cat([s[0], g], dim=-1))
         mirrored = self.actor(torch.cat([s[1], g * self.goal_mirror], dim=-1)) * self.action_mirror
         return torch.tanh((own + mirrored) / 2), self.log_std.exp()
+
+
+def world_model(ckpt: dict):
+    """An untrained world model shaped as the checkpoint's: built from its genome, or (checkpoints from
+    before genomes) the WorldModel it names."""
+    if 'genome' in ckpt:
+        arch, params = genomes.impl(ckpt['genome'], 'arch')
+        return arch.build(ckpt['input_dim'], **params)
+    return WorldModel(ckpt['input_dim'], z_dim=ckpt['z'], hidden=ckpt['hidden'])
+
+
+def world_spec(ckpt: dict) -> dict:
+    """What world_model() needs from a checkpoint, carried into the driver's."""
+    return {'genome': ckpt['genome']} if 'genome' in ckpt else {'hidden': ckpt['hidden']}
 
 
 def encode_pair(world, x, input_mirror):
@@ -128,6 +143,7 @@ def main():
                              'policy learn to cope when one goes missing')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', default=default_device())
+    parser.add_argument('--out-dir', default=os.path.join(data_dir, 'models'))
     args = parser.parse_args()
     record = runs.new_record('driver', parser, args)
     dev = args.device
@@ -157,7 +173,7 @@ def main():
     record['transitions'] = {'train': int(sum(len(t.step) for t in train_tr)), 'test': int(sum(len(t.step) for t in val_tr))}
     started = time.time()
 
-    world = WorldModel(ckpt['input_dim'], z_dim=ckpt['z'], hidden=ckpt['hidden'])
+    world = world_model(ckpt)
     world.load_state_dict(ckpt['model'])
     world.to(dev)
     norm = Normalizer(sessions)
@@ -275,12 +291,12 @@ def main():
     if not all(torch.isfinite(p).all() for p in [*world.parameters(), *driver.parameters()]):
         sys.exit('non-finite weights after training: nothing saved')
 
-    os.makedirs(os.path.join(data_dir, 'models'), exist_ok=True)
-    out = os.path.join(data_dir, 'models', f'driver-{time.strftime("%Y%m%d-%H%M%S")}.pt')
+    os.makedirs(args.out_dir, exist_ok=True)
+    out = unused_path(args.out_dir, 'driver')
     cpu = lambda m: {k: v.cpu() for k, v in m.state_dict().items()}
     record.update(seconds=round(time.time() - started), results=results)
     runs.save(out, {'world': cpu(world), 'driver': cpu(driver), 'mean': norm.mean, 'std': norm.std,
-                    'input_dim': ckpt['input_dim'], 'z': ckpt['z'], 'hidden': ckpt['hidden']}, record)
+                    'input_dim': ckpt['input_dim'], 'z': ckpt['z'], **world_spec(ckpt)}, record)
     print(f'saved {out} (and its run record, .json)')
 
 
