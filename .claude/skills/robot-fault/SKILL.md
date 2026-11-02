@@ -11,7 +11,7 @@ Start with `bash ops/health.sh` (robot-health skill). Everything here only reads
 
 1. Is the base talking? `ssh turtlebot-pi 'source /etc/turtlebot4/setup.bash; timeout 8 ros2 topic echo --once /battery_state --field percentage'`. No number means the base is silent. After a restart or docking, wait about 5 minutes (its startup once took about 2.5 min at full CPU) before calling it dead.
 2. Talking but ignoring commands: read the base's own log, GET only (the page's buttons reboot it): `ssh turtlebot-pi 'curl -s http://192.168.186.2/logs-raw' | grep -iE 'e-stop|ignoring velocities' | tail` (192.168.186.2 is the base's fixed address on its USB link to the Pi). `E-Stop request: Set system E-Stop ON` with no OFF after it means the e-stop is on (circle/B on the controller toggles it). `Ignoring velocities commanded while an autonomous behavior is running!` means a dock or wall-follow action holds the wheels until it ends. The log is in UTC.
-3. Silent: save that log page before anyone restarts the base; it may record the cause. Restarting the base's application (its web page) is the user's step.
+3. Silent: save that log page before anyone restarts the base; it may record the cause. For the user, the base's web page opens through a tunnel: `ssh -L 8080:192.168.186.2:80 turtlebot-pi`, then http://localhost:8080. A silent base also stops its discovery multicast: `sudo timeout 30 tcpdump -n -i usb0 src host 192.168.186.2 and dst net 224.0.0.0/4` on the Pi (the user types it: sudo) shows packets to `239.255.0.1:7400` about every 3 s from a healthy base. Restarting the base's application (its web page) is the user's step.
 4. E-stop on: tell the user. `bash ops/field-test.sh estop off` only when they say it's safe. A reboot also clears it, which hides the cause.
 
 ## Lidar scans missing on the VM
@@ -25,7 +25,7 @@ Do these while it's happening, before stopping the run, and note the times. The 
 
 ## Camera not publishing undocked
 
-`ssh turtlebot-pi 'journalctl -u turtlebot4 --since "-10 min" | grep -E "\[oakd\]|OAKD"'`: `start_camera ... sending request` with no `Starting camera.` after it is the known stuck start. `ssh turtlebot-pi 'lsusb | grep 03e7'`: `2485` means not started, `f63b` started. The fix is `sudo systemctl restart turtlebot4`, typed by the user; `Camera ready!` appears about 40 s later.
+`ssh turtlebot-pi 'journalctl -u turtlebot4 --since "-10 min" | grep -E "\[oakd\]|OAKD"'`: `start_camera ... sending request` with no `Starting camera.` after it is the known stuck start. `ssh turtlebot-pi 'lsusb | grep 03e7'`: `2485` means not started, `f63b` started. The fix is `sudo systemctl restart turtlebot4`, typed by the user; `Camera ready!` appears about 40 s later. To see the picture, in the VM's desktop: `ros2 run rqt_image_view rqt_image_view`, then pick `/oakd/rgb/preview/image_raw` from the dropdown at the top left (it starts with none). The camera stops each time the robot docks (likely the TurtleBot 4's power saver; the setting wasn't checked); if the stuck start keeps happening, turning the power saver off is the user's call.
 
 ## Rules
 
