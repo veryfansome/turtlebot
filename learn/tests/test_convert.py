@@ -9,7 +9,7 @@ def series(times_s, values):
 
 def test_steps_continue_after_the_scans_stop_with_the_scan_marked_missing():
     names = ('scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
-             'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset')
+             'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset', 'wheels_enabled', 'distress')
     s = {name: series([], []) for name in names}
     scan_t = np.arange(0, 2.0, 0.1)  # scans for 2 s ...
     odom_t = np.arange(0, 5.0, 0.05)  # ... odometry for 5 s
@@ -26,3 +26,18 @@ def test_steps_continue_after_the_scans_stop_with_the_scan_marked_missing():
     assert np.isfinite(steps['odom_vel']).all()
     assert np.isnan(steps['wheel_current'][t > 3.6]).all() and np.isfinite(steps['wheel_current'][t < 2.9]).all()
     assert np.isfinite(steps['pose'][t > 2.5]).all()  # SLAM's last correction carries on with odometry
+    assert steps['wheels_enabled'].all() and not steps['distress'].any()
+
+
+def test_wheels_without_power_and_calls_for_help_become_step_fields():
+    names = ('scan', 'cmd', 'joy', 'odom', 'wheel_vels', 'wheel_status', 'mouse', 'slip', 'ir', 'kidnap', 'dock',
+             'battery', 'rescue', 'map_odom', 'odom_base', 'map', 'hazard', 'slam_reset', 'wheels_enabled', 'distress')
+    s = {name: series([], []) for name in names}
+    scan_t = np.arange(0, 3.0, 0.1)
+    s['scan'] = series(scan_t, [np.full(SCAN_SECTORS, 1.0, np.float32)] * len(scan_t))
+    s['wheels_enabled'] = series([0.0, 1.0, 2.0], [True, False, True])  # e-stopped from 1 s to 2 s
+    s['distress'] = series([1.55], [True])
+    steps = build_steps(s)
+    t = steps['t']
+    assert not steps['wheels_enabled'][(t > 1.05) & (t < 1.95)].any() and steps['wheels_enabled'][t > 2.05].all()
+    assert steps['distress'].sum() == 1 and abs(t[steps['distress']][0] - 1.6) < 1e-6
