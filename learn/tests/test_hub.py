@@ -20,3 +20,15 @@ def test_the_dataset_card_header_is_valid_yaml():
     import yaml
     header = hub.CARD.split('---')[1]
     assert yaml.safe_load(header)['pretty_name'].startswith('TurtleBot 4')
+
+
+def test_a_pod_fetches_only_the_searched_sessions_however_many_are_pinned(tmp_path):
+    import json
+    source = {'files': ['a.npz', 'a.maps.npz', 'b.npz', 'b.maps.npz', 'new.npz', 'new.maps.npz']}
+    manifest = tmp_path / 'm.json'
+    manifest.write_text(json.dumps({'sessions': {'a.npz': 'x', 'b.npz': 'y'}}))
+    assert hub.wanted(source, str(manifest)) == ['a.maps.npz', 'a.npz', 'b.maps.npz', 'b.npz']
+    assert hub.wanted(source) == source['files']
+    manifest.write_text(json.dumps({'sessions': {'gone.npz': 'z'}}))
+    with pytest.raises(SystemExit):
+        hub.wanted(source, str(manifest))

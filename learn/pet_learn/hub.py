@@ -2,7 +2,7 @@
 waiting for an upload from home.
 
     uv run python -m pet_learn.hub push            # upload new or changed data/steps files; pin the revision
-    uv run python -m pet_learn.hub pull --to DIR   # fetch the pinned revision (on a pod)
+    uv run python -m pet_learn.hub pull --to DIR [--manifest eval/data_manifest.json]   # fetch the pinned revision (on a pod)
     uv run python -m pet_learn.hub status          # what's pinned, and whether data/steps matches it
 
 The repo holds data/steps as is: <session>.npz (the steps) and <session>.maps.npz (its SLAM maps).
@@ -85,16 +85,32 @@ def push(folder: str, repo: str):
     print(f'commit: {getattr(commit, "commit_url", commit)}')
 
 
-def pull(to: str, revision: str = None):
+def wanted(source: dict, manifest: str = None) -> list:
+    """The files to fetch: everything pinned, or with a manifest (eval/data_manifest.json) only its sessions and
+    their maps. The evolve search measures exactly the manifest's sessions, while the pin grows with every
+    recording, so a pod scoring the search must fetch only those, or its preflight refuses the folder."""
+    if manifest is None:
+        return list(source['files'])
+    with open(manifest) as f:
+        sessions = json.load(f)['sessions']
+    files = sorted(set(sessions) | {name.replace('.npz', '.maps.npz') for name in sessions})
+    absent = sorted(set(files) - set(source['files']))
+    if absent:
+        raise SystemExit(f'the pinned revision lacks {absent}: the manifest names sessions that were never pushed')
+    return files
+
+
+def pull(to: str, revision: str = None, manifest: str = None):
     from huggingface_hub import snapshot_download
     source = pinned()
     if not source:
         raise SystemExit(f'nothing pinned in {SOURCE}: push first')
     revision = revision or source['revision']
+    files = wanted(source, manifest)
     snapshot_download(source['repo'], repo_type='dataset', revision=revision, local_dir=to,
-                      allow_patterns=['*.npz'], token=token())
+                      allow_patterns=files, token=token())
     got = sorted(os.path.basename(p) for p in glob.glob(os.path.join(to, '*.npz')))
-    missing = sorted(set(source['files']) - set(got))
+    missing = sorted(set(files) - set(got))
     if missing:
         raise SystemExit(f'pulled {source["repo"]}@{revision[:10]} but missing {missing}')
     print(f'pulled {len(got)} files from {source["repo"]}@{revision[:10]} into {to}')
@@ -120,13 +136,14 @@ def main():
     p = sub.add_parser('pull')
     p.add_argument('--to', required=True)
     p.add_argument('--revision', help='default: the pinned one')
+    p.add_argument('--manifest', help="only this data manifest's sessions and their maps (eval/data_manifest.json)")
     p = sub.add_parser('status')
     p.add_argument('--steps', default=STEPS)
     args = parser.parse_args()
     if args.cmd == 'push':
         push(args.steps, args.repo)
     elif args.cmd == 'pull':
-        pull(args.to, args.revision)
+        pull(args.to, args.revision, args.manifest)
     else:
         status(args.steps)
 
