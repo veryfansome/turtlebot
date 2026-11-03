@@ -8,7 +8,7 @@ A TurtleBot 4 "robot pet" (ROS 2 Jazzy; Create 3 base, RPLIDAR, OAK-D Pro camera
 - **VM** (`ssh turtlebot-vm`, Ubuntu 24.04 on the Mac, [vm/README.md](vm/README.md)): the ROS package in `src/` (the safety layer, the pickup node, the recorder), field tests, bags in `~/drives/`. It runs only pushed commits, rebuilt by the vm-sync skill.
 - **Mac**: `learn/` (a uv project, torch on the Apple GPU), and the `ops/` and `cloud/` scripts, run from the repo root with `bash`.
 - **RunPod**: world-model training waves through `cloud/` (built, never launched yet).
-- `data/` (drives, steps, models) is git-ignored. Converted steps are also on the private Hugging Face dataset `veryfansome/turtlebot-steps` (pinned in `learn/data_source.json`). The evolve campaign lives in the private repo `veryfansome/turtlebot-evolve`.
+- `data/` (drives, steps, models) is git-ignored. Converted steps are also on the private Hugging Face dataset `veryfansome/turtlebot-steps` (pinned in `learn/data_source.json`); the raw bags are backed up to the private dataset `veryfansome/turtlebot-drives` (`pet_learn.hub push-drives`). The evolve campaign lives in the private repo `veryfansome/turtlebot-evolve`.
 
 ## Branches and commits
 

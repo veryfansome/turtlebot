@@ -3,7 +3,8 @@
 Every recorded step can be scored against any goal. Goals are poses the robot reached later in the
 session (hindsight, so the data shows how to get there) or random poses in mapped free space (so
 values also learn about goals the driving never reached). For each goal, the steps up to window_s
-before it become transitions, scored with the goal-reaching reward.
+before it become transitions, scored with the goal-reaching reward. Cut this way, a hindsight episode is a
+window: up to window_s of driving ending at a random step, whose pose is the goal (train_driver --episodes windows).
 
 Only hindsight transitions teach the policy (Transitions.hindsight): the recorded commands weren't
 aimed at random goals, so for those they say nothing about how to reach the goal.
@@ -21,6 +22,8 @@ import numpy as np
 from pet_learn.episodes import map_segment
 from pet_learn.geodesic import DistanceField, passable
 from pet_learn.reward import RewardParams, arrived, heading_error, motor_current, potential
+
+HINDSIGHT = 0.7  # the share of goals that are poses the driving went on to reach; the rest are random free space
 
 GOAL_SCALE = 3.0  # goal offsets (m) are divided by this; farther goals are clipped to this distance
 
@@ -58,10 +61,13 @@ def empty_transitions() -> Transitions:
 
 
 def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, rng: np.random.Generator,
-            window_s: float = 30.0, hindsight: float = 0.7, gamma: float = 0.99, rescue_goals: int = 100,
-            p: RewardParams = RewardParams()) -> Transitions:
+            window_s: float = 30.0, hindsight: float = HINDSIGHT, gamma: float = 0.99, rescue_goals: int = 100,
+            p: RewardParams = RewardParams(), pairs: list = None, pair_repeats: int = 1) -> Transitions:
     """Transitions for n_goals goals, using only scored steps (ok, episodes.scored) in [lo, hi), plus rescue_goals for
-    each rescue in that range."""
+    each rescue in that range. pairs, if given ((start, goal) steps, e.g. stops.stop_pairs within [lo, hi)), replace
+    the windows as hindsight episodes (an experiment, train_driver --episodes stops: from a rest to where the person
+    stopped, instead of up to window_s before a random step): each pair, pair_repeats times (the same in every session, so a session's
+    weight follows its pairs), beside n_goals * (1 - hindsight) random-goal episodes as usual."""
     rate = float(steps['rate'])
     dt = 1.0 / rate
     window = int(window_s * rate)
@@ -73,15 +79,25 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
                if r > lo and ok[r - 1]]
     if len(candidates) == 0:  # e.g. a held-out tail recorded after the lidar's messages stopped
         return empty_transitions()
-    jobs = [(int(rng.choice(candidates)), None) for _ in range(n_goals)]
-    jobs += [(r - 1, r) for r in rescues for _ in range(rescue_goals)]
+    if pairs is None:
+        jobs = [(int(rng.choice(candidates)), None, None) for _ in range(n_goals)]
+    else:
+        if any(not (lo <= s < g < hi and ok[s]) for s, g in pairs):
+            raise ValueError(f'pairs must be scored starts with lo <= start < goal < hi ({lo}, {hi})')
+        jobs = [(g, None, (s, g)) for s, g in pairs for _ in range(pair_repeats)]
+        jobs += [(int(rng.choice(candidates)), None, 'random') for _ in range(round(n_goals * (1 - hindsight)))]
+    jobs += [(r - 1, r, None) for r in rescues for _ in range(rescue_goals)]
     parts = []
-    for e, (goal_k, rescue) in enumerate(jobs):
+    for e, (goal_k, rescue, pair) in enumerate(jobs):
         # goal_k is the episode's last step; for a rescue episode, the step before the press.
         gmap = maps.map_at(steps['t'][goal_k])
         if gmap is None:
             continue
-        is_hindsight = rescue is None and rng.random() < hindsight
+        if pair is None:
+            is_hindsight = rescue is None and rng.random() < hindsight
+        else:
+            is_hindsight = pair != 'random'
+        start = pair[0] if is_hindsight and pair is not None else None
         # Goals it reached after being freed, on the same SLAM map (a pickup's reset starts a new one).
         later = candidates[(candidates > rescue) & (segment[candidates] == segment[rescue])] if rescue is not None else []
         if is_hindsight:
@@ -94,10 +110,11 @@ def relabel(steps: dict, maps, ok: np.ndarray, lo: int, hi: int, n_goals: int, r
                 continue
             gx, gy = gmap.to_world(tuple(free[rng.integers(len(free))]))
             goal = np.array([gx, gy, rng.uniform(-math.pi, math.pi)])
-        # The usable stretch of steps leading up to goal_k, at most window long.
-        start = goal_k
-        while start > max(lo, goal_k - window) and ok[start - 1]:
-            start -= 1
+        # The usable stretch of steps leading up to goal_k, at most window long (a pair brings its own).
+        if start is None:
+            start = goal_k
+            while start > max(lo, goal_k - window) and ok[start - 1]:
+                start -= 1
         if goal_k - start < 2:
             continue
         try:
