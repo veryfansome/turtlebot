@@ -32,3 +32,25 @@ def test_a_pod_fetches_only_the_searched_sessions_however_many_are_pinned(tmp_pa
     manifest.write_text(json.dumps({'sessions': {'gone.npz': 'z'}}))
     with pytest.raises(SystemExit):
         hub.wanted(source, str(manifest))
+
+
+def test_every_folder_with_a_bag_is_backed_up_even_one_not_stopped_cleanly(tmp_path):
+    for name, files in {'a': ['a_0.mcap', 'metadata.yaml'], 'b': ['b_0.mcap'], 'c': ['metadata.yaml'],
+                        'd': ['d_0.mcap', 'd_1.mcap', 'metadata.yaml', 'notes.txt']}.items():
+        (tmp_path / name).mkdir()
+        for f in files:
+            (tmp_path / name / f).write_text('x')
+    (tmp_path / 'stray.mcap').write_text('x')
+    assert hub.bag_sessions(str(tmp_path)) == ['a', 'b', 'd']
+
+
+def test_a_restore_fetches_exactly_the_bags_asked_for():
+    repo = ['README.md', '.gitattributes', 'a/a_0.mcap', 'a/metadata.yaml', 'b/b_0.mcap', 'b/b_1.mcap', 'b/metadata.yaml']
+    assert hub.bag_files(repo) == sorted(repo[2:])
+    assert hub.bag_files(repo, ['b']) == ['b/b_0.mcap', 'b/b_1.mcap', 'b/metadata.yaml']
+    assert hub.bag_files(repo, ['zz']) == []
+
+
+def test_the_drives_card_header_is_valid_yaml():
+    import yaml
+    assert yaml.safe_load(hub.DRIVES_CARD.split('---')[1])['pretty_name'].startswith('TurtleBot 4')
