@@ -1,0 +1,28 @@
+{
+ "name": "part-drop-1",
+ "kind": "score",
+ "created": "2026-11-02 09:35:25",
+ "code": "8414f75",
+ "genomes": {
+  "part-drop-1-original": "genomes/part-drop-1-original.json",
+  "part-drop-1-all0.1": "genomes/part-drop-1-all0.1.json",
+  "part-drop-1-enc0.1": "genomes/part-drop-1-enc0.1.json",
+  "part-drop-1-dyn0.1": "genomes/part-drop-1-dyn0.1.json",
+  "part-drop-1-head0.1": "genomes/part-drop-1-head0.1.json",
+  "part-drop-1-encdyn0.1": "genomes/part-drop-1-encdyn0.1.json",
+  "part-drop-1-encdyn0.1-hide0.05": "genomes/part-drop-1-encdyn0.1-hide0.05.json",
+  "part-drop-1-dyn0.2": "genomes/part-drop-1-dyn0.2.json",
+  "part-drop-1-encdyn0.2": "genomes/part-drop-1-encdyn0.2.json"
+ },
+ "chunks": [],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

@@ -1,0 +1,38 @@
+{
+ "name": "reg-1",
+ "kind": "score",
+ "created": "2026-11-02 00:54:03",
+ "code": "9df91af",
+ "genomes": {
+  "reg-1-base": "genomes/reg-1-base.json",
+  "reg-1-weight_decay0-hide0-dropout0": "genomes/reg-1-weight_decay0-hide0-dropout0.json",
+  "reg-1-weight_decay0-hide0-dropout0.1": "genomes/reg-1-weight_decay0-hide0-dropout0.1.json",
+  "reg-1-weight_decay0-hide0.05-dropout0": "genomes/reg-1-weight_decay0-hide0.05-dropout0.json",
+  "reg-1-weight_decay0-hide0.05-dropout0.1": "genomes/reg-1-weight_decay0-hide0.05-dropout0.1.json",
+  "reg-1-weight_decay0-hide0.1-dropout0": "genomes/reg-1-weight_decay0-hide0.1-dropout0.json",
+  "reg-1-weight_decay0-hide0.1-dropout0.1": "genomes/reg-1-weight_decay0-hide0.1-dropout0.1.json",
+  "reg-1-weight_decay0.001-hide0-dropout0": "genomes/reg-1-weight_decay0.001-hide0-dropout0.json",
+  "reg-1-weight_decay0.001-hide0-dropout0.1": "genomes/reg-1-weight_decay0.001-hide0-dropout0.1.json",
+  "reg-1-weight_decay0.001-hide0.05-dropout0": "genomes/reg-1-weight_decay0.001-hide0.05-dropout0.json",
+  "reg-1-weight_decay0.001-hide0.05-dropout0.1": "genomes/reg-1-weight_decay0.001-hide0.05-dropout0.1.json",
+  "reg-1-weight_decay0.001-hide0.1-dropout0": "genomes/reg-1-weight_decay0.001-hide0.1-dropout0.json",
+  "reg-1-weight_decay0.001-hide0.1-dropout0.1": "genomes/reg-1-weight_decay0.001-hide0.1-dropout0.1.json",
+  "reg-1-weight_decay0.01-hide0-dropout0": "genomes/reg-1-weight_decay0.01-hide0-dropout0.json",
+  "reg-1-weight_decay0.01-hide0-dropout0.1": "genomes/reg-1-weight_decay0.01-hide0-dropout0.1.json",
+  "reg-1-weight_decay0.01-hide0.05-dropout0": "genomes/reg-1-weight_decay0.01-hide0.05-dropout0.json",
+  "reg-1-weight_decay0.01-hide0.05-dropout0.1": "genomes/reg-1-weight_decay0.01-hide0.05-dropout0.1.json",
+  "reg-1-weight_decay0.01-hide0.1-dropout0": "genomes/reg-1-weight_decay0.01-hide0.1-dropout0.json",
+  "reg-1-weight_decay0.01-hide0.1-dropout0.1": "genomes/reg-1-weight_decay0.01-hide0.1-dropout0.1.json"
+ },
+ "chunks": [],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

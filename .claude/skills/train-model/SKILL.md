@@ -15,7 +15,7 @@ Everything runs on the Mac. Commands below are from the repo root; `learn/` is a
    (cd learn && uv run python -m pet_learn.train_world)                                       # stops itself when val error stops improving
    (cd learn && uv run python -m pet_learn.train_driver --world ../data/models/world-<time>.pt)   # the world model just trained
    ```
-   Run them in the background (on the Mac's GPU, on 6 sessions: about 5 min for the world model and 14 min for the driver; each record's `seconds` has the exact time). Run them plainly: the defaults are the settings. If a setting needs to differ every time, change its default in the code rather than passing a flag, so no run can forget it. A flag is only for an experiment, and the report says which.
+   Run them in the background (on the Mac's GPU, on 6 sessions: about 8 min for the world model and 14 min for the driver; each record's `seconds` has the exact time). Run them plainly: the defaults are the settings. If a setting needs to differ every time, change its default in the code rather than passing a flag, so no run can forget it. A flag is only for an experiment, and the report says which.
 3. **Compare.** `(cd learn && uv run python -m pet_learn.runs)` lists every run's record (`data/models/<model>.json`), oldest first: code version, data, the settings that differ from the defaults, when and why it stopped, and test results. Compare against the current best and check the records first:
    - The same data (the `data` fingerprint: sessions and the exact steps files, so a reconversion shows), unless the new data is what's being tested.
    - The same code version (`commit+changes`, which covers only the training code, `learn/pet_learn` and its dependencies), unless the code is what's being tested. If the commits differ, `git diff <a> <b> -- learn/pet_learn` shows whether the training code did.
@@ -28,4 +28,4 @@ Everything runs on the Mac. Commands below are from the repo root; `learn/` is a
 - A world model trained before the inputs changed won't load into `train_driver` (it says so up front). Retrain the world model.
 - Training defaults to the Mac's GPU (MPS). For timing, benchmark only while nothing else runs.
 - Models without a `.json` beside them were saved before run records existed (up to world-20261101-145954 and driver-20261101-143434), and `pet_learn.runs` doesn't list them. Compare them only through the numbers printed when they were trained.
-- The current best is world-20261101-173810 / driver-20261101-175456 (6 sessions, 88 inputs; numbers in learn/MODEL.md). Its record predates `test_score`: compare it by the per-head test results.
+- The current best is world-20261102-152220 / driver-20261102-153924 (6 sessions, 88 inputs, the tuned defaults of 2026-11-02; numbers in learn/MODEL.md). The one before it, world-20261101-173810 / driver-20261101-175456 (the old settings), has a record that predates `test_score`: compare it by the per-head test results.

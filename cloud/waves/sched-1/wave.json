@@ -1,0 +1,36 @@
+{
+ "name": "sched-1",
+ "kind": "score",
+ "created": "2026-11-02 02:56:53",
+ "code": "9df91af",
+ "genomes": {
+  "sched-1-base": "genomes/sched-1-base.json",
+  "sched-1-warmup0-decay0-cons0.5": "genomes/sched-1-warmup0-decay0-cons0.5.json",
+  "sched-1-warmup0-decay0-cons2": "genomes/sched-1-warmup0-decay0-cons2.json",
+  "sched-1-warmup0-decay10000-cons0.5": "genomes/sched-1-warmup0-decay10000-cons0.5.json",
+  "sched-1-warmup0-decay10000-cons1": "genomes/sched-1-warmup0-decay10000-cons1.json",
+  "sched-1-warmup0-decay10000-cons2": "genomes/sched-1-warmup0-decay10000-cons2.json",
+  "sched-1-warmup500-decay0-cons0.5": "genomes/sched-1-warmup500-decay0-cons0.5.json",
+  "sched-1-warmup500-decay0-cons1": "genomes/sched-1-warmup500-decay0-cons1.json",
+  "sched-1-warmup500-decay0-cons2": "genomes/sched-1-warmup500-decay0-cons2.json",
+  "sched-1-warmup500-decay10000-cons0.5": "genomes/sched-1-warmup500-decay10000-cons0.5.json",
+  "sched-1-warmup500-decay10000-cons1": "genomes/sched-1-warmup500-decay10000-cons1.json",
+  "sched-1-warmup500-decay10000-cons2": "genomes/sched-1-warmup500-decay10000-cons2.json",
+  "sched-1-dropout0.2-hidden128": "genomes/sched-1-dropout0.2-hidden128.json",
+  "sched-1-dropout0.2-hidden256": "genomes/sched-1-dropout0.2-hidden256.json",
+  "sched-1-dropout0.3-hidden128": "genomes/sched-1-dropout0.3-hidden128.json",
+  "sched-1-dropout0.3-hidden256": "genomes/sched-1-dropout0.3-hidden256.json",
+  "sched-1-hide0.2": "genomes/sched-1-hide0.2.json"
+ },
+ "chunks": [],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

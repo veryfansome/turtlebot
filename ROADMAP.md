@@ -2,15 +2,15 @@
 
 The goal is a robotic pet: a TurtleBot 4 that moves around the house on its own initiative, notices things, and gets more interesting as it learns. This is a fun ML project, built up in stages, with a working robot at the end of each one.
 
-## Next steps (as of 2026-11-01)
+## Next steps (as of 2026-11-02)
 
 Where the last session stopped. Each item points to its stage below; [CLAUDE.md](CLAUDE.md) has the rules for working here.
 
 - **Field-test the new robot features** (stages 1-2): the start tone, rescue beeps, lidar-lost alarm, call for help and the pickup node's SLAM reset are built but none has run on the robot. Record one session with a pickup and a stuck moment, then check `/drive/slam_reset` and `/drive/distress` are in the bag and in the converted steps (none of the 6 sessions so far has either). Needs the owner's go (field-test skill).
 - **Find out why /scan drops on the VM** (Known issues): when the lidar-lost alarm sounds, run the robot-fault skill's lidar checks before stopping the recording.
-- **Measure on RunPod** (stage 2, "Better training, measured"): the speed probe (about $0.50), then the evolve search's noise floor and gen 0, then a batch x learning-rate grid. Each launch needs the owner's go (cloud-wave skill). Extra seeds for the batch-size comparison: on hold.
+- **Tune and search on RunPod** (stage 2, "Better training, measured"): next, a loss weight per prediction head (the lidar's above all), then the evolve search's noise floor and gen 0 on the tuned baseline. Each launch needs the owner's go (cloud-wave skill).
 - **Calling for help, steps 3-4** (stage 2, reward): charge the rescue penalty as "a person had to help", on the event; later, calling for help as an action the policy can choose.
-- **Turning toward goals behind** (stage 2, driving model): about 0.12 rad/s for goals back-left or back-right, none for one straight behind.
+- **Turning toward goals behind** (stage 2, driving model): about 0.1 rad/s for goals back-left or back-right, none for one straight behind.
 - **Questions for the owner** (stage 5): obstacles (depth) or recognition (DINOv2/CLIP features) first; OK to change the camera's config through an ops unit.
 
 ## Design decisions
@@ -62,14 +62,15 @@ Where the last session stopped. Each item points to its stage below; [CLAUDE.md]
   - a world model: from the current readings and the drive command, predict every sensor up to a second ahead (lidar, floor speed, wheel speeds and currents, bumps, slip, pose change). Dozens of real targets per step, so it learns a lot from a little driving, and it doesn't need goals;
   - values and a policy for reaching goal poses (IQL), on the same state, from recorded sessions relabeled with goals and scored with the reward. Not copying the driving: the reward decides what was good, so meandering stretches still teach.
   - Validated offline on held-out driving: the world model against "nothing changes" baselines, values against actual returns.
-  - Built ([learn/MODEL.md](learn/MODEL.md)). On 6 sessions (world-20261101-173810, driver-20261101-175456): error relative to the baselines 1 s ahead, on held-out driving: wheel speeds 0.06, odometry 0.09, pose change 0.14, floor speed 0.39, IR 0.52, motor current 0.52, lidar 0.68; bump AUC 0.89. Values track returns (rank correlation 0.64). The policy (goal 2 m away) drives forward fastest toward a goal ahead (0.29 m/s), turns 0.34 rad/s toward one on either side, only 0.12 rad/s toward one back-left or back-right, and not at all for one straight behind (likely because the policy averages each state with its mirror image, so a goal dead behind has no side to pick: a guess, not checked).
+  - Built ([learn/MODEL.md](learn/MODEL.md)). On 6 sessions, with the settings tuned on RunPod (world-20261102-152220, driver-20261102-153924): error relative to the baselines 1 s ahead, on held-out driving: wheel speeds 0.05, odometry 0.08, pose change 0.12, floor speed 0.35, IR 0.51, motor current 0.48, lidar 0.71; bump AUC 0.88. Values track returns (rank correlation 0.67). The policy (goal 2 m away) drives forward fastest toward a goal ahead (0.29 m/s), turns 0.35 rad/s toward one on either side, only 0.09 rad/s toward one back-left or back-right, and not at all for one straight behind (likely because the policy averages each state with its mirror image, so a goal dead behind has no side to pick: a guess, not checked).
   - [ ] Turning toward goals behind: more recorded driving that turns to face a goal, and a tie-break for a goal straight behind.
-- [ ] **Better training, measured** ([learn/README.md](learn/README.md), [cloud/](cloud/README.md)): every model has a run record beside it (`pet_learn.runs`); the world model's score is the geometric mean of its error ratios against the naive baselines; val picks the iteration and test is reported; what's trained is a genome (architecture, objective, optimizer, batches) whose baseline reproduces the old training bit for bit.
+- [ ] **Better training, measured** ([learn/README.md](learn/README.md), [cloud/](cloud/README.md)): every model has a run record beside it (`pet_learn.runs`); the world model's score is the geometric mean of its error ratios against the naive baselines; val picks the iteration and test is reported; what's trained is a genome (architecture, objective, optimizer, batches) whose impls, with no params (`genome.ORIGINAL`), reproduce the old training bit for bit; the default genome (`genome.BASELINE`) is those impls with params tuned on RunPod.
   - [x] An evolutionary search over the genome ([learn/evolve](learn/evolve/EVOLVE.md)), scored by `learn/eval`, pinned to the 6 sessions (`learn/eval/data_manifest.json`). Its campaign lives in the private repo `veryfansome/turtlebot-evolve` (`learn/evolve/campaign.py push|pull`).
-  - [x] Training waves on RunPod ([cloud/](cloud/README.md)): cost estimate, budget cap, the pod always confirmed stopped; pods fetch only the searched sessions. Reviewed twice; never launched.
-  - [ ] The speed probe on RunPod (about $0.50), to size waves.
+  - [x] Training waves on RunPod ([cloud/](cloud/README.md)): cost estimate, budget cap, the pod always confirmed stopped; pods fetch only the searched sessions. First launched 2026-11-01; seven waves so far, about $8 in all, every pod confirmed stopped.
+  - [x] The speed probe on RunPod (`probe-1`, 2026-11-01): on an RTX 4090, 6 trainings at once is fastest (111 iterations/s in all, about 13.5 min per full training).
   - [ ] The search's noise floor and gen 0, measured on RunPod; until then the search isn't set up.
-  - [ ] A batch-size x learning-rate grid on RunPod. (Extra seeds for the batch-size comparison on the Mac: on hold.)
+  - [x] A hyperparameter grid on RunPod (2026-11-02, waves `bs-lr-1`, `shape-1`, `reg-1`, `sched-1`, `confirm-1`, `part-drop-1` in `cloud/waves/`): dropout 0.1 in the encoder and dynamics (not the heads), sensors hidden in 10% of windows, batch 2,048 is the new default. Val fitness 1.225 against 1.119 for the old settings (3 seeds; higher is better), test error relative to the naive baselines 0.364 against 0.401. Batch size, learning rate, depth, width, warmup, decay and the consistency weight made no measurable difference; dropout in the heads made the lidar prediction worse.
+  - [ ] A loss weight per prediction head, then a wave on the lidar's and the bump's weights.
   - [ ] A final check on sessions recorded after the search was set up (none yet).
 - [ ] **Reinforcement learning on the robot**: off-policy (e.g. SAC), learning from everything ever recorded, relabeled with goals, so every minute of driving counts. Training goals are reachable poses in the map, near ones first, then farther, plus goals past the known trouble spots.
 - [ ] Maybe: pretrain in the TurtleBot 4 Gazebo simulator for walls and open space. It can't model a cushion or a floor strip, so the house stays the main teacher.

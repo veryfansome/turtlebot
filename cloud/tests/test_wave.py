@@ -23,12 +23,13 @@ def dirs(tmp_path, monkeypatch):
 
 def test_a_grid_is_every_combination_or_the_lists_paired():
     base = genomes.load()
+    before = json.loads(json.dumps(base))
     full = wave.grid_genomes(base, {'optim.batch': [256, 1024], 'optim.lr': [3e-4, 6e-4]}, pairs=False)
     assert len(full) == 4 and 'grid-batch256-lr0.0003' in full
-    assert full['grid-batch256-lr0.0003']['chunks']['optim']['params'] == {'batch': 256, 'lr': 3e-4}
+    assert full['grid-batch256-lr0.0003']['chunks']['optim']['params'] == {**base['chunks']['optim']['params'], 'batch': 256, 'lr': 3e-4}
     paired = wave.grid_genomes(base, {'optim.batch': [256, 1024], 'optim.lr': [3e-4, 6e-4]}, pairs=True)
     assert sorted(paired) == ['grid-batch1024-lr0.0006', 'grid-batch256-lr0.0003']
-    assert base['chunks']['optim']['params'] == {}  # the base is untouched
+    assert base == before  # the base is untouched
 
 
 def test_a_wave_records_its_genomes_and_refuses_to_overwrite(dirs):

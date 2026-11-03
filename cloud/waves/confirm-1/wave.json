@@ -1,0 +1,27 @@
+{
+ "name": "confirm-1",
+ "kind": "score",
+ "created": "2026-11-02 04:57:20",
+ "code": "9df91af",
+ "genomes": {
+  "confirm-1-baseline": "genomes/confirm-1-baseline.json",
+  "confirm-1-a-winner": "genomes/confirm-1-a-winner.json",
+  "confirm-1-a-runnerup": "genomes/confirm-1-a-runnerup.json",
+  "confirm-1-final": "genomes/confirm-1-final.json",
+  "confirm-1-final-decay": "genomes/confirm-1-final-decay.json",
+  "confirm-1-wide-dropout0.3": "genomes/confirm-1-wide-dropout0.3.json"
+ },
+ "chunks": [],
+ "seeds": [
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

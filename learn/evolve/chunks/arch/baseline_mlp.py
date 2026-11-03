@@ -17,7 +17,13 @@ can read. Everything must be differentiable and deterministic given torch's seed
 from pet_learn.model import WorldModel
 
 
-def build(input_dim, z=64, hidden=128):
-    model = WorldModel(input_dim, z_dim=z, hidden=hidden)
+def build(input_dim, z=64, hidden=128, enc_layers=2, dyn_layers=2, head_layers=1, dropout=0.0,
+          enc_dropout=None, dyn_dropout=None, head_dropout=None):
+    """z: the state's size; hidden: every hidden layer's width; enc_layers, dyn_layers, head_layers: hidden
+    layers in the encoder, the dynamics and each head; dropout after each hidden layer (none by default);
+    enc_dropout, dyn_dropout, head_dropout: one part's dropout instead (unset: `dropout`)."""
+    model = WorldModel(input_dim, z_dim=z, hidden=hidden, enc_layers=enc_layers, dyn_layers=dyn_layers,
+                       head_layers=head_layers, dropout=dropout, enc_dropout=enc_dropout,
+                       dyn_dropout=dyn_dropout, head_dropout=head_dropout)
     model.z_dim = z
     return model

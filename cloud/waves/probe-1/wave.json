@@ -1,0 +1,18 @@
+{
+ "name": "probe-1",
+ "kind": "probe",
+ "created": "2026-11-01 21:21:32",
+ "code": "9df91af",
+ "genomes": {
+  "baseline": "genomes/baseline.json"
+ },
+ "chunks": [],
+ "seeds": [
+  0
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 1,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

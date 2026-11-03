@@ -1,0 +1,32 @@
+{
+ "name": "shape-1",
+ "kind": "score",
+ "created": "2026-11-01 23:32:21",
+ "code": "9df91af",
+ "genomes": {
+  "shape-1-base": "genomes/shape-1-base.json",
+  "shape-1-hidden128-dyn_layers2-enc_layers2": "genomes/shape-1-hidden128-dyn_layers2-enc_layers2.json",
+  "shape-1-hidden128-dyn_layers2-enc_layers3": "genomes/shape-1-hidden128-dyn_layers2-enc_layers3.json",
+  "shape-1-hidden128-dyn_layers3-enc_layers2": "genomes/shape-1-hidden128-dyn_layers3-enc_layers2.json",
+  "shape-1-hidden128-dyn_layers3-enc_layers3": "genomes/shape-1-hidden128-dyn_layers3-enc_layers3.json",
+  "shape-1-hidden128-dyn_layers4-enc_layers2": "genomes/shape-1-hidden128-dyn_layers4-enc_layers2.json",
+  "shape-1-hidden128-dyn_layers4-enc_layers3": "genomes/shape-1-hidden128-dyn_layers4-enc_layers3.json",
+  "shape-1-hidden256-dyn_layers2-enc_layers2": "genomes/shape-1-hidden256-dyn_layers2-enc_layers2.json",
+  "shape-1-hidden256-dyn_layers2-enc_layers3": "genomes/shape-1-hidden256-dyn_layers2-enc_layers3.json",
+  "shape-1-hidden256-dyn_layers3-enc_layers2": "genomes/shape-1-hidden256-dyn_layers3-enc_layers2.json",
+  "shape-1-hidden256-dyn_layers3-enc_layers3": "genomes/shape-1-hidden256-dyn_layers3-enc_layers3.json",
+  "shape-1-hidden256-dyn_layers4-enc_layers2": "genomes/shape-1-hidden256-dyn_layers4-enc_layers2.json",
+  "shape-1-hidden256-dyn_layers4-enc_layers3": "genomes/shape-1-hidden256-dyn_layers4-enc_layers3.json"
+ },
+ "chunks": [],
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}

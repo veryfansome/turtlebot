@@ -105,12 +105,13 @@ def summary(r: dict) -> str:
     changed = ' '.join(f'{k}={v}' for k, v in a.items() if k not in ('steps', 'world') and k in defaults and v != defaults[k])
     head = f"{r['model']:32s} {version:18s} {data:34s} {a.get('device', '?'):4s} {changed or 'defaults'}"
     g = r.get('genome')
-    if g:  # an evolve or non-baseline genome: say which impls and params, beyond the defaults above
+    if g:  # say which impls and params, beyond the defaults above
+        # Every non-empty param is listed, a plain run's included: the baseline's params changed on
+        # 2026-11-02 (genome.BASELINE), so "defaults" alone can't tell a run before it from one after.
         from pet_learn.genome import BASELINE
-        from_file = bool(a.get('genome'))  # a plain run's params are its flags, already listed
-        differs = [f"{axis}={spec['impl']}{spec['params'] if from_file and spec['params'] else ''}"
+        differs = [f"{axis}={spec['impl']}{spec['params'] if spec['params'] else ''}"
                    for axis, spec in sorted(g['chunks'].items())
-                   if spec['impl'] != BASELINE['chunks'][axis]['impl'] or (from_file and spec['params'])]
+                   if spec['impl'] != BASELINE['chunks'][axis]['impl'] or spec['params']]
         if differs:
             head += '  genome ' + ' '.join(differs)
     if r['kind'] == 'world':

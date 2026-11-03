@@ -176,6 +176,10 @@ def main():
     world = world_model(ckpt)
     world.load_state_dict(ckpt['model'])
     world.to(dev)
+    # Dropout off (eval mode; the baseline arch has no batch norm, so nothing else changes): the values and
+    # policy train on the same states they're checked and run on, and the Q targets aren't noisy. The
+    # world model still learns here, without dropout's regularization.
+    world.eval()
     norm = Normalizer(sessions)
     driver = Driver(ckpt['z']).to(dev)
     target_q = copy.deepcopy(driver)

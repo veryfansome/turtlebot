@@ -1,0 +1,23 @@
+{
+ "chunks": {
+  "arch": {
+   "impl": "baseline_mlp",
+   "params": {}
+  },
+  "objective": {
+   "impl": "baseline_world_loss",
+   "params": {}
+  },
+  "optim": {
+   "impl": "baseline_adamw",
+   "params": {
+    "batch": 2048,
+    "lr": 0.0024
+   }
+  },
+  "batcher": {
+   "impl": "baseline_uniform",
+   "params": {}
+  }
+ }
+}
