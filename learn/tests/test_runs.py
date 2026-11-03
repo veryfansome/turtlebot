@@ -28,3 +28,13 @@ def test_a_run_record_is_saved_beside_and_inside_the_model(tmp_path):
     line = runs.summary(saved)
     assert 'kept 80 of 100' in line and 'scan 0.80' in line and '1 sessions/2448 steps' in line
     assert 'batch=1024' in line and 'lr=' not in line  # only what differs from the defaults
+
+
+def test_a_plain_runs_genome_params_are_listed_so_the_old_and_tuned_defaults_differ():
+    from pet_learn import genome as genomes
+    base = {'model': 'world-x.pt', 'kind': 'world', 'args': {}, 'defaults': {}, 'code': {}, 'sessions': [],
+            'iterations': 10, 'best_iteration': 5, 'results': {}}
+    tuned = runs.summary({**base, 'genome': genomes.load()})
+    old = runs.summary({**base, 'genome': genomes.load_dict(json.loads(json.dumps(genomes.ORIGINAL)))})
+    assert "'enc_dropout': 0.1" in tuned and "'hide': 0.1" in tuned
+    assert 'genome' not in old

@@ -13,18 +13,45 @@ STEPS = os.path.normpath(os.path.join(LEARN, '..', 'data', 'steps'))
 has_data = pytest.mark.skipif(not os.path.isdir(STEPS), reason='needs the converted sessions in data/steps')
 
 
-def test_the_baseline_genome_names_every_axis_and_loads_its_impls():
+def test_the_baseline_genome_is_the_tuned_one_and_names_every_axis():
     g = genomes.load()
     assert set(g['chunks']) == set(genomes.AXES)
-    for axis in genomes.AXES:
-        module, params = genomes.impl(g, axis)
-        assert params == {}
+    params = {axis: genomes.impl(g, axis)[1] for axis in genomes.AXES}
+    assert params == {'arch': {'enc_dropout': 0.1, 'dyn_dropout': 0.1}, 'objective': {},
+                      'optim': {'batch': 2048, 'lr': 0.0006, 'weight_decay': 0.001}, 'batcher': {'hide': 0.1}}
     assert genomes.recipe(g).startswith('arch=baseline_mlp')
+    for axis in genomes.AXES:  # the same impls as ORIGINAL, whose empty params reproduce the old training
+        assert g['chunks'][axis]['impl'] == genomes.ORIGINAL['chunks'][axis]['impl']
+        assert genomes.ORIGINAL['chunks'][axis]['params'] == {}
+
+
+def test_the_baseline_has_dropout_in_the_encoder_and_dynamics_but_not_the_heads():
+    import torch
+    arch, params = genomes.impl(genomes.load(), 'arch')
+    model = arch.build(88, **params)
+    rate = lambda part: [m.p for m in part.modules() if isinstance(m, torch.nn.Dropout)]
+    assert rate(model.encoder) and set(rate(model.encoder)) == {0.1}
+    assert rate(model.dynamics) and set(rate(model.dynamics)) == {0.1}
+    assert rate(model.heads) == [] and rate(model.pose_head) == []
+
+
+def test_the_evolve_config_starts_from_the_same_baseline():
+    with open(os.path.join(LEARN, 'evolve', 'evolve.json')) as f:
+        cfg = json.load(f)
+    assert cfg['surface']['registry']['baseline_genome'] == genomes.BASELINE
+
+
+def test_a_genome_missing_an_axis_gets_the_original_impl_defaults_not_the_tuned_params(tmp_path):
+    partial = tmp_path / 'p.json'
+    partial.write_text(json.dumps({'chunks': {'optim': {'impl': 'baseline_adamw', 'params': {'lr': 1e-3}}}}))
+    g = genomes.load(str(partial))
+    assert g['chunks']['arch']['params'] == {} and g['chunks']['batcher']['params'] == {}
+    assert g['chunks']['optim']['params'] == {'lr': 1e-3}
 
 
 def test_flags_override_the_baseline_params_and_genomes_reject_unknown_axes(tmp_path):
     g = genomes.load(None, {'optim': {'batch': 256}})
-    assert g['chunks']['optim']['params'] == {'batch': 256}
+    assert g['chunks']['optim']['params'] == {**genomes.BASELINE['chunks']['optim']['params'], 'batch': 256}
     bad = tmp_path / 'g.json'
     bad.write_text(json.dumps({'chunks': {'vision': {'impl': 'x'}}}))
     with pytest.raises(ValueError):
@@ -35,12 +62,14 @@ def test_flags_override_the_baseline_params_and_genomes_reject_unknown_axes(tmp_
         genomes.impl(genomes.load(str(missing)), 'arch')
 
 
-def test_the_baseline_optimizer_and_architecture_are_todays():
+def test_the_original_genomes_optimizer_and_architecture_are_the_old_ones():
     import torch
-    arch, _ = genomes.impl(genomes.load(), 'arch')
-    model = arch.build(88)
+    original = genomes.load_dict(json.loads(json.dumps(genomes.ORIGINAL)))
+    arch, params = genomes.impl(original, 'arch')
+    model = arch.build(88, **params)
     assert model.z_dim == 64
-    optim, _ = genomes.impl(genomes.load(), 'optim')
+    optim, params = genomes.impl(original, 'optim')
+    assert params == {}
     opt, scheduler, batch = optim.make(model.parameters())
     assert isinstance(opt, torch.optim.AdamW) and scheduler is None and batch == 1024
     assert opt.defaults['lr'] == 6e-4 and opt.defaults['weight_decay'] == 1e-3
