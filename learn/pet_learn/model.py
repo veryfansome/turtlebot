@@ -1,5 +1,7 @@
 """The driving model (see MODEL.md): an encoder to a state z, latent dynamics, prediction heads, and
 goal-conditioned values and policy on the same state."""
+import math
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -79,9 +81,30 @@ def current_readings(batch: dict) -> dict:
             for name in TARGETS}
 
 
-def world_loss(model: WorldModel, batch: dict, bump_weight: float = 10.0, consistency: float = 1.0):
+LOSS_HEADS = tuple(TARGETS) + ('pose',)  # the loss terms a head weight can scale
+
+
+def check_weight(name: str, w) -> None:
+    """A loss weight must be a real number, finite and >= 0 (a negative one lets the loss fall forever)."""
+    if isinstance(w, bool) or not isinstance(w, (int, float)) or not 0 <= w < math.inf:  # nan fails too
+        raise ValueError(f'{name} must be a finite number >= 0, got {w!r}')
+
+
+def world_loss(model: WorldModel, batch: dict, bump_weight: float = 10.0, consistency: float = 1.0,
+               head_weights: dict | None = None):
     """Prediction error of every head at every horizon (0..h), plus latent consistency. Returns the
-    total and the parts."""
+    total and the parts (each part as weighted). bump_weight weighs the steps a bump happens at within
+    the bump head's loss (the objective calls it bump_pos_weight); head_weights scales whole heads'
+    terms ({name: weight}, names from LOSS_HEADS, 1 when left out: so head_weights['bump'] is the whole
+    bump term's weight, the objective's bump_weight). A weight of exactly 1 isn't applied, so the
+    defaults are the unweighted loss, bit for bit."""
+    head_weights = head_weights or {}
+    check_weight('bump_weight', bump_weight)
+    check_weight('consistency', consistency)
+    for name, w in head_weights.items():
+        if name not in LOSS_HEADS:
+            raise ValueError(f'no head {name!r} to weigh (heads: {", ".join(LOSS_HEADS)})')
+        check_weight(f'the {name} weight', w)
     x = batch['inputs']
     zs = model.rollout(model.encode(x[:, 0]), batch['actions'])  # (B, h+1, z)
     preds = model.decode(zs, current_readings(batch))
@@ -100,5 +123,8 @@ def world_loss(model: WorldModel, batch: dict, bump_weight: float = 10.0, consis
     parts['pose'] = F.mse_loss(pose, batch['pose'][:, 1:])
     with torch.no_grad():
         target_z = model.encode(x[:, 1:])
+    for name, w in head_weights.items():
+        if w != 1:
+            parts[name] = w * parts[name]
     parts['consistency'] = consistency * F.mse_loss(zs[:, 1:], target_z)
     return sum(parts.values()), parts

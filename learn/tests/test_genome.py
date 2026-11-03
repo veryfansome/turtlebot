@@ -211,6 +211,45 @@ def test_the_objective_weighs_consistency_as_asked(monkeypatch):
     assert one['scan'].item() == pytest.approx(three['scan'].item())
 
 
+@has_data
+def test_the_objective_weighs_each_head_as_asked_and_its_defaults_are_the_old_loss(monkeypatch):
+    import torch
+    from eval.common import small_sessions
+    from pet_learn.model import LOSS_HEADS, world_loss
+    from pet_learn.train_world import to_torch
+    monkeypatch.setenv('PET_STEPS', STEPS)
+    sessions, train, norm = small_sessions()
+    batcher, params = genomes.impl(genomes.load(), 'batcher')
+    batch = to_torch(batcher.make(sessions, train, norm, np.random.default_rng(0), 64, **params)(), 'cpu')
+    objective, _ = genomes.impl(genomes.load(), 'objective')
+    arch, _ = genomes.impl(genomes.load(), 'arch')
+    torch.manual_seed(0)
+    model = arch.build(batch['inputs'].shape[-1])
+    total, parts = objective.loss(model, batch)
+    old_total, old_parts = world_loss(model, batch)  # the loss as it was: no head weights
+    assert torch.equal(total, old_total) and list(parts) == list(old_parts)
+    assert all(torch.equal(parts[k], old_parts[k]) for k in parts)
+    assert set(LOSS_HEADS) <= set(parts)
+    total2, weighted = objective.loss(model, batch, scan_weight=2.0, ir_weight=0, bump_pos_weight=1.0)
+    assert weighted['scan'].item() == pytest.approx(2 * parts['scan'].item(), rel=1e-6)
+    assert weighted['ir'].item() == 0
+    assert weighted['bump'].item() < parts['bump'].item()  # bumps counted 1x instead of 10x
+    for k in set(parts) - {'scan', 'ir', 'bump'}:
+        assert torch.equal(weighted[k], parts[k])
+    assert total2.item() == pytest.approx(sum(v.item() for v in weighted.values()), rel=1e-6)
+
+
+def test_loss_weights_must_name_a_head_and_be_finite_non_negative_numbers():
+    from pet_learn.model import world_loss
+    for bad in ({'lidar': 2.0}, {'scan': -1.0}, {'scan': float('nan')}, {'scan': float('inf')}, {'scan': True},
+                {'scan': '2'}):
+        with pytest.raises(ValueError):
+            world_loss(None, {}, head_weights=bad)
+    for bad in ({'bump_weight': -10.0}, {'consistency': -1.0}, {'consistency': float('nan')}):
+        with pytest.raises(ValueError):
+            world_loss(None, {}, **bad)
+
+
 def test_dropout_can_be_set_per_part_and_each_part_defaults_to_dropout():
     import torch
     arch, _ = genomes.impl(genomes.load(), 'arch')
