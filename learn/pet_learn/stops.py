@@ -1,6 +1,6 @@
 """Where the person driving brought the robot to rest: natural starts and goals for driving episodes.
 
-Today's hindsight goals (pet_learn.goals) are poses at random steps, mostly taken while the robot was
+Training's default episodes, windows (pet_learn.goals), end at random steps whose poses are the goals, mostly taken while the robot was
 moving (about 70% faster than 0.05 m/s, forward or back, in a sample of 3,000, 2026-11-02), and
 the episodes leading to them mostly start moving too. A car's natural episode runs from parked to parked. Here:
 

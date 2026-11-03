@@ -30,8 +30,9 @@ import torch.nn.functional as F
 
 from pet_learn.dataset import Normalizer, SessionData, hidden_sensors, hide, mirror_inputs, window_batch
 from pet_learn.episodes import scored
-from pet_learn.goals import goal_features, relabel
+from pet_learn.goals import HINDSIGHT, goal_features, relabel
 from pet_learn.maps import SessionMaps
+from pet_learn.stops import stop_pairs
 from pet_learn.model import WorldModel, mlp, world_loss
 from pet_learn.train_world import default_device, to_torch, unused_path
 from pet_learn import genome as genomes
@@ -141,6 +142,12 @@ def main():
     parser.add_argument('--hide', type=float, default=0.05,
                         help='chance each sensor is hidden in a training example (dataset.hide), so values and '
                              'policy learn to cope when one goes missing')
+    parser.add_argument('--episodes', choices=('windows', 'stops'), default='windows',
+                        help='how the recorded driving is cut into hindsight episodes: windows, up to 30 s of driving '
+                             'ending at a random step, whose pose is the goal; stops (an experiment, pet_learn.stops), '
+                             'from a rest to a later intended stop. Validation always uses windows, so runs compare')
+    parser.add_argument('--pair-window', type=float, default=30.0,
+                        help='with --episodes stops: the longest stop-to-stop episode, seconds')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--device', default=default_device())
     parser.add_argument('--out-dir', default=os.path.join(data_dir, 'models'))
@@ -153,6 +160,11 @@ def main():
     paths = sorted(p for p in glob.glob(os.path.join(args.steps, '*.npz')) if not p.endswith('.maps.npz'))
     ckpt = torch.load(args.world, weights_only=False, map_location='cpu')
     sessions, train_tr, val_tr = [], [], []
+    repeats = 1
+    if args.episodes == 'stops':  # each pair this many times, so stop episodes are as many as windows would be
+        n_pairs = sum(len(stop_pairs(s, scored(s), 0, SessionData(s).split, args.pair_window)) for s in (dict(np.load(p)) for p in paths))
+        repeats = max(1, round(args.goals * HINDSIGHT * len(paths) / max(n_pairs, 1)))
+        print(f'stop-to-stop episodes: {n_pairs} pairs, each {repeats} times')
     for path in paths:
         steps = dict(np.load(path))
         data = SessionData(steps)
@@ -162,7 +174,9 @@ def main():
         maps = SessionMaps(path.replace('.npz', '.maps.npz'))
         ok = scored(steps)
         sessions.append(data)
-        train_tr.append(relabel(steps, maps, ok, 0, data.split, args.goals, rng, gamma=args.gamma))
+        pairs = stop_pairs(steps, ok, 0, data.split, args.pair_window) if args.episodes == 'stops' else None
+        train_tr.append(relabel(steps, maps, ok, 0, data.split, args.goals, rng, gamma=args.gamma, pairs=pairs,
+                                pair_repeats=repeats))
         val_tr.append(relabel(steps, maps, ok, data.test_split, len(ok), max(args.goals // 8, 50), rng, gamma=args.gamma))
     print(f'{len(sessions)} sessions; transitions: {sum(len(t.step) for t in train_tr)} training, '
           f'{sum(len(t.step) for t in val_tr)} test; test transitions per session: {[len(t.step) for t in val_tr]}')

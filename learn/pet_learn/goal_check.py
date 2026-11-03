@@ -30,8 +30,8 @@ distance, which is never longer than the map distance training uses, so it ends 
 as training's episodes do. States after it, where the robot has arrived and the recorded driving sits
 or moves on, are never trained on; they're reported on a row of their own.
 
-Goals come in two families: hindsight, sampled as train_driver's (a random scored step, with up to 30 s
-of scored driving before it), and stops (from a rest to a later intended stop within 30 s,
+Goals come in two families: windows, sampled as train_driver's default episodes (a random scored step,
+with up to 30 s of scored driving before it), and stops (from a rest to a later intended stop within 30 s,
 stops.stop_pairs). By default the region is the last 20% of each session: the driver never trains on
 it, and its first half only picked the world model's iteration, by prediction error. The last 10%
 alone (--region test) holds few stop pairs. This is a check, not a ranking: it can't say whether the
@@ -58,8 +58,8 @@ BANDS = np.arange(0, 181, 30)
 DISTANCES = [0, 0.25, 0.5, 1, 2, np.inf]
 
 
-def hindsight_pairs(steps: dict, ok: np.ndarray, lo: int, hi: int, n: int, rng, window_s: float = 30.0) -> list:
-    """(start, goal) pairs sampled as train_driver's hindsight goals (goals.relabel): a random scored step
+def window_pairs(steps: dict, ok: np.ndarray, lo: int, hi: int, n: int, rng, window_s: float = 30.0) -> list:
+    """(start, goal) pairs sampled as train_driver's default episodes, windows (goals.relabel): a random scored step
     in [lo, hi), with the scored driving on one SLAM map up to window_s before it."""
     rate = float(steps['rate'])
     window = int(round(window_s * rate))
@@ -192,7 +192,7 @@ def main():
     parser.add_argument('--steps', default=os.path.join(data_dir, 'steps'))
     parser.add_argument('--region', choices=('heldout', 'test'), default='heldout',
                         help='heldout: the last 20%% of each session; test: the last 10%%')
-    parser.add_argument('--goals', type=int, default=200, help='hindsight goals per session')
+    parser.add_argument('--goals', type=int, default=200, help='window episodes per session')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--json', help='also write the results here')
     parser.add_argument('--device', default=default_device())
@@ -202,7 +202,7 @@ def main():
     world, driver, ckpt = load_driver(args.driver, args.device)
     mirror_x = input_mirror(ckpt['input_dim']).to(args.device)
     mirror_g = GOAL_MIRROR.numpy()
-    collected = {'stops': [], 'hindsight': []}
+    collected = {'stops': [], 'windows': []}
     for path in sorted(p for p in glob.glob(os.path.join(args.steps, '*.npz')) if not p.endswith('.maps.npz')):
         steps = dict(np.load(path))
         data = SessionData(steps)
@@ -210,7 +210,7 @@ def main():
             raise SystemExit(f"{args.driver} takes {ckpt['input_dim']} inputs per step, the data has {data.inputs.shape[1]}")
         ok = scored(steps)
         lo, hi = (data.split if args.region == 'heldout' else data.test_split), len(ok)
-        families = {'stops': stop_pairs(steps, ok, lo, hi), 'hindsight': hindsight_pairs(steps, ok, lo, hi, args.goals, rng)}
+        families = {'stops': stop_pairs(steps, ok, lo, hi), 'windows': window_pairs(steps, ok, lo, hi, args.goals, rng)}
         for family, pairs in families.items():
             st = pair_states(steps, pairs)
             if st is None:
@@ -225,7 +225,7 @@ def main():
 
     results = {'driver': args.driver, 'region': args.region}
     print(f'{args.driver}, {args.region} region (90% intervals from resampling 30 s blocks of held-out driving)')
-    for family in ('stops', 'hindsight'):
+    for family in ('stops', 'windows'):
         parts = collected[family]
         if not parts:
             print(f'\n{family}: no pairs')

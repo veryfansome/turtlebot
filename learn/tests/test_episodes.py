@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 
 from pet_learn.episodes import evaluate, hindsight_episodes, usable
@@ -190,3 +191,23 @@ def test_a_stretch_with_nothing_to_score_gives_no_transitions():
     steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(50)])
     tr = relabel(steps, OPEN, np.zeros(50, bool), 0, 50, 10, np.random.default_rng(0))
     assert len(tr.step) == 0 and tr.goal.shape == (0, 5)
+
+
+def test_stop_pairs_can_replace_the_windows():
+    from pet_learn.goals import relabel
+    steps = drive([(0.5 + 0.02 * k, 1.5, 0.0) for k in range(100)])
+    ok = np.ones(100, bool)
+    plain = relabel(steps, OPEN, ok, 0, 100, 30, np.random.default_rng(0))
+    # windows unchanged: these are what relabel gave before stop pairs existed (commit 6c4450e)
+    assert (len(plain.step), int(plain.step.sum()), int(plain.hindsight.sum())) == (1368, 42845, 928)
+    assert round(float(plain.reward.sum()), 4) == 26.2644
+    tr = relabel(steps, OPEN, ok, 0, 100, 30, np.random.default_rng(0), pairs=[(20, 60), (10, 40)], pair_repeats=3)
+    pairs = tr.hindsight
+    assert len(np.unique(tr.episode[pairs])) == 6  # each pair three times
+    assert tr.step[pairs].min() == 10 and tr.step[pairs].max() < 60  # from a pair's start up to (at most) its goal
+    assert len(np.unique(tr.episode[~pairs])) <= 9  # 30 * (1 - 0.7) random-goal episodes, as usual
+    none = relabel(steps, OPEN, ok, 0, 100, 30, np.random.default_rng(0), pairs=[])
+    assert not none.hindsight.any()  # no pairs: no stop episodes, still random-goal ones
+    for bad in [(60, 20), (20, 100), (-1, 40)]:  # backwards, a goal past hi, a start before lo
+        with pytest.raises(ValueError):
+            relabel(steps, OPEN, ok, 0, 100, 30, np.random.default_rng(0), pairs=[bad])
