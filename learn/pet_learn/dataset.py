@@ -6,7 +6,8 @@ from pet_learn.episodes import scored, usable, wheels_enabled
 
 FORWARD_CAP, TURN_CAP = 0.3, 1.5  # the safety layer's caps (m/s, rad/s): actions are scaled by them
 SCAN_CAP = 4.0  # lidar sectors are capped at this (m): beyond it, distance matters little for driving
-H = 10  # steps ahead to predict (1 s at 10 Hz)
+H = 10  # steps ahead to predict in training (1 s at 10 Hz)
+EVAL_H = 20  # steps ahead the held-out windows score (2 s): further than training reaches
 POSE_SCALE = (0.3, 0.3, 1.0)  # pose change targets (m, m, rad) are divided by these: about 1 s of driving
 IR_SCALE = np.log1p(1000.0)  # IR readings go in as log(1 + reading) / this: 0-5 is nothing near, ~500 a hand at 5 cm
 
@@ -107,11 +108,14 @@ class SessionData:
     how good it is, on driving the choice never saw). The percentages are of the session's scored
     driving (episodes.scored), not of all its steps: a session can end in a long stretch without
     scans (or on the dock), and cutting by step count would put its whole held-out part there. The
-    split steps are kept (split, test_split) so the driver holds out the same driving."""
+    split steps are kept (split, test_split) so the driver holds out the same driving.
 
-    def __init__(self, steps: dict, holdout: float = 0.2, h: int = H):
+    Training windows span h steps; held-out ones (val, test, all) span eval_h, so a model is also scored
+    on how far its predictions hold beyond what it was trained on."""
+
+    def __init__(self, steps: dict, holdout: float = 0.2, h: int = H, eval_h: int = EVAL_H):
         self.steps = steps
-        self.h = h
+        self.h, self.eval_h = h, eval_h
         self.inputs = inputs(steps)
         self.actions = actions(steps)
         self.targets = step_targets(steps)
@@ -121,7 +125,8 @@ class SessionData:
         n = len(ok)
         # A window starting at t needs steps t..t+h all usable.
         bad = np.concatenate([[0], np.cumsum(~ok)])
-        starts = np.flatnonzero(bad[np.arange(n - h) + h + 1] - bad[np.arange(n - h)] == 0)
+        windows = lambda h: np.flatnonzero(bad[np.arange(max(n - h, 0)) + h + 1] - bad[np.arange(max(n - h, 0))] == 0)
+        starts, held = windows(h), windows(eval_h)
         u = np.flatnonzero(scored(steps))
         if len(u) == 0:  # nothing to hold out
             split = test_split = end = n
@@ -130,9 +135,9 @@ class SessionData:
             end = int(u[-1]) + 1  # test ends with the scored driving, like the driver's
         self.split, self.test_split = split, test_split
         self.train = starts[starts + h < split]
-        self.val = starts[(starts >= split) & (starts + h < test_split)]
-        self.test = starts[(starts >= test_split) & (starts + h < end)]
-        self.all = starts  # every usable window: a session held out entirely (the evolve final split)
+        self.val = held[(held >= split) & (held + eval_h < test_split)]
+        self.test = held[(held >= test_split) & (held + eval_h < end)]
+        self.all = held  # every usable window: a session held out entirely (the evolve final split)
 
 
 def mirror_inputs(x: np.ndarray) -> np.ndarray:
@@ -168,12 +173,12 @@ def mirror(batch: dict) -> dict:
     return out
 
 
-def raw_batch(data: SessionData, starts: np.ndarray) -> dict:
+def raw_batch(data: SessionData, starts: np.ndarray, h: int = None) -> dict:
     """Arrays for windows starting at starts, before standardizing: inputs (B, h+1, d), actions
     (B, h, 2), each target (B, h+1, size), pose changes (B, h+1, 3), and for each sensor in SENSORS
     whether the reading is real (<name>_ok) and whether the encoder sees it (<name>_seen: the same,
     until hide() hides it), each (B, h+1, 1)."""
-    idx = starts[:, None] + np.arange(data.h + 1)[None, :]
+    idx = starts[:, None] + np.arange((data.h if h is None else h) + 1)[None, :]
     batch = {
         'inputs': data.inputs[idx],
         'actions': data.actions[idx[:, :-1]],
@@ -244,10 +249,10 @@ class Normalizer:
 
 
 def window_batch(data: SessionData, starts: np.ndarray, norm: Normalizer, mirrored: bool = False,
-                 rng=None, hide_p: float = 0.0) -> dict:
+                 rng=None, hide_p: float = 0.0, h: int = None) -> dict:
     """Standardized arrays for windows starting at starts, optionally mirrored left to right, and with
     sensors hidden at random (hide_p, hidden_sensors)."""
-    raw = raw_batch(data, starts)
+    raw = raw_batch(data, starts, h)
     if hide_p > 0:
         raw = hide_in_batch(raw, hidden_sensors(len(starts), rng, hide_p))
     return norm(mirror(raw) if mirrored else raw)

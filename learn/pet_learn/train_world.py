@@ -4,7 +4,8 @@
 
 The last 20% of each session's scored driving is held out: the first half of it (val) picks the best model and when to
 stop, and the second half (test) is what's reported, so the choice can't flatter the result. Each
-head is compared, at 0.1 s, 0.5 s and 1 s ahead, with a
+head is compared, at 0.1 s, 0.5 s, 1 s and 2 s ahead (training reaches 1 s, dataset.H; held-out windows 2 s,
+dataset.EVAL_H), with a
 naive baseline on the held-out windows: "the reading stays as it is" for sensors, "keep the current
 velocity" for the pose change, and the base rate for bumps and slip. A ratio under 1 means the model
 predicts better than the baseline. Training stops once the val error hasn't improved for
@@ -28,7 +29,7 @@ from pet_learn.dataset import MASKS, POSE_SCALE, TARGETS, Normalizer, SessionDat
 from pet_learn.model import current_readings
 from pet_learn import genome as genomes, runs
 
-HORIZONS = (1, 5, 10)
+HORIZONS = (1, 5, 10, 20)  # steps ahead scored: 0.1, 0.5, 1 and 2 s (training reaches 1 s, dataset.H)
 
 
 def default_device() -> str:
@@ -108,8 +109,8 @@ def evaluate(model, sessions, norm, device, part='val'):
             windows = getattr(s, part)
             if len(windows) == 0:
                 continue
-            b = window_batch(s, windows, norm)
-            b['odom_raw'] = s.targets['odom'][windows[:, None] + np.arange(s.h + 1)[None, :]] * np.array([0.3, 1.5], np.float32)
+            b = window_batch(s, windows, norm, h=s.eval_h)
+            b['odom_raw'] = s.targets['odom'][windows[:, None] + np.arange(s.eval_h + 1)[None, :]] * np.array([0.3, 1.5], np.float32)
             batches.append(b)
         if not batches:
             raise ValueError(f'no {part} windows in any session')

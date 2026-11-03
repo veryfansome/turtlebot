@@ -122,9 +122,29 @@ def test_the_encoder_sees_whether_the_motors_have_power():
 
 def test_val_and_test_windows_dont_overlap_training_or_each_other():
     data = SessionData(fake_steps(n=400))
-    h = data.h
     assert len(data.val) and len(data.test)
-    assert data.train.max() + h < data.val.min() and data.val.max() + h < data.test.min()
+    assert data.train.max() + data.h < data.val.min() and data.val.max() + data.eval_h < data.test.min()
+
+
+def test_held_out_windows_reach_further_than_training_ones_and_training_is_unchanged():
+    from pet_learn.dataset import EVAL_H, H, window_batch
+    steps = fake_steps(n=400)
+    steps['scan_age'] = np.zeros(400, np.float32)
+    steps['scan_age'][345] = 100.0  # one unusable step in the held-out part
+    data = SessionData(steps)
+    assert (data.h, data.eval_h) == (H, EVAL_H) and EVAL_H > H
+    # Training windows are exactly the ones before 2 s was added: every start whose next h steps are all
+    # usable, ending before the split (the formula as it was, written out).
+    from pet_learn.episodes import usable
+    ok = usable(steps)
+    old = np.array([t for t in range(len(ok) - H) if ok[t:t + H + 1].all()])
+    assert np.array_equal(data.train, old[old + H < data.split])
+    for start in np.concatenate([data.val, data.test]):  # each held-out window's steps are all usable
+        assert not (start <= 345 <= start + EVAL_H)
+    norm = Normalizer([data])
+    held = window_batch(data, data.val[:4], norm, h=data.eval_h)
+    assert held['inputs'].shape[1] == EVAL_H + 1 and held['actions'].shape[1] == EVAL_H
+    assert window_batch(data, data.train[:4], norm)['inputs'].shape[1] == H + 1
 
 
 def test_a_session_ending_without_scans_still_holds_out_driving():
@@ -135,7 +155,7 @@ def test_a_session_ending_without_scans_still_holds_out_driving():
     data = SessionData(steps)
     assert len(data.val) and len(data.test)  # split over the scored driving, not all 1000 steps
     assert data.test_split < 400 + 100  # within 10 s of the last scan
-    assert data.test.max() + data.h < 400 + 101  # and test ends with the scored driving
+    assert data.test.max() + data.eval_h < 400 + 101  # and test ends with the scored driving
 
 
 def test_hidden_sensors_are_missing_to_the_encoder_but_still_targets():

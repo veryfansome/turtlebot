@@ -116,7 +116,9 @@ def test_the_adapter_turns_a_run_record_into_the_engines_metrics(tmp_path, monke
     import eval.adapter as adapter
     record = {'val_score': 0.52, 'test_score': 0.55, 'iterations': 14800, 'best_iteration': 12800, 'seconds': 400,
               'results': {'test_1s': {'scan': 0.68, 'floor': 0.4, 'odom': 0.09, 'wheels': 0.06, 'current': 0.52,
-                                      'bump': 0.89, 'slip': 0.85, 'ir': 0.52, 'pose': 0.14}}}
+                                      'bump': 0.89, 'slip': 0.85, 'ir': 0.52, 'pose': 0.14},
+                          'test_2s': {'scan': 0.70, 'floor': 0.4, 'odom': 0.07, 'wheels': 0.05, 'current': 0.5,
+                                      'bump': 0.83, 'slip': 0.81, 'ir': 0.5, 'pose': 0.2}}}
 
     def fake_run(cmd, cwd, env, capture_output, text):
         out = cmd[cmd.index('--out-dir') + 1]
@@ -135,6 +137,7 @@ def test_the_adapter_turns_a_run_record_into_the_engines_metrics(tmp_path, monke
     assert abs(metrics['combined_score'] - 0.6539) < 1e-3 and metrics['correct']  # -log(0.52)
     assert 'scan' in metrics['text_feedback'] and 'wheels' in metrics['text_feedback']
     assert set(metrics['private']) == {'seed1'}
+    assert metrics['public']['test_2s']['pose'] == 0.2  # inventors see the 2 s horizon too
 
 
 def test_the_score_is_a_geometric_mean_no_head_can_dominate():
