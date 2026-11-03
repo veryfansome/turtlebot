@@ -11,7 +11,7 @@ stops improving), and writes RESULTS_DIR/metrics.json:
   higher is better; on the inner split's val windows (the slice of each session that
   also picks the training iteration to keep); on the final split, on every window of the sessions in
   PET_FINAL_STEPS (recorded after the search began, never optimized against). Higher is better.
-- public: what inventors may see: the val and test scores, the test error per head at 1 s, and how
+- public: what inventors may see: the val and test scores, the test error per head at 1 and 2 s, and how
   long it trained.
 - private: per seed, the full per-head, per-horizon test breakdown.
 - text_feedback: one sentence on where the error is.
@@ -77,6 +77,7 @@ def main():
             'val_error_vs_baseline': record['val_score'],
             'test_error_vs_baseline': record['test_score'],
             'test_1s': at_1s,
+            'test_2s': record['results']['test_2s'],
             'iterations': record['iterations'],
             'best_iteration': record['best_iteration'],
             'seconds': record['seconds'],

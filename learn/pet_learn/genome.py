@@ -17,13 +17,13 @@ BASELINE is the default genome: what a plain train_world run trains and the evol
 point (evolve.json's baseline_genome is the same). Its params were tuned on RunPod (2026-11-02:
 waves bs-lr-1, shape-1, reg-1, sched-1, confirm-1, part-drop-1 in cloud/waves/): dropout 0.1 in the
 encoder and the dynamics (none in the heads), sensors hidden in 10% of windows, batches of 2,048.
-Over 3 seeds it scored 1.225 against 1.119 for ORIGINAL (val fitness, higher is better) and cut the
+Over 3 seeds it scored (on the score of then, horizons up to 1 s) 1.225 against 1.119 for ORIGINAL (val fitness, higher is better) and cut the
 test error relative to the naive baselines from 0.401 to 0.364. Dropout in the heads too scored the
 same (1.209 +/- 0.018 against 1.126 +/- 0.020 over 8 seeds) but made the 1 s lidar prediction worse
 (0.727 against 0.710, where without head dropout it's 0.707).
 
 The loss weighs the lidar's term 3x, the IR's 2x and the bump's 0.5x (waves head-w-1, head-w-2,
-head-w-conf-1, 2026-11-02): over 5 fresh seeds this scored 1.240 against 1.212 for equal weights,
+head-w-conf-1, 2026-11-02): over 5 fresh seeds this scored (horizons up to 1 s) 1.240 against 1.212 for equal weights,
 with the lidar's error 1 s ahead 12% lower (0.635 against 0.722) and IR's lower too (0.483 against
 0.502), at about 3% on motor current and 2% on floor speed, and slip AUC 0.875 against 0.908.
 
