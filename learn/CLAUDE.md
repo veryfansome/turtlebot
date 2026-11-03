@@ -3,7 +3,7 @@
 Offline learning on the Mac (no ROS): bags to 10 Hz steps (`pet_learn/convert.py`, fields in `STEP_FIELDS`), then a world model (`train_world`) and an IQL driver on its state (`train_driver`). Read [README.md](README.md) and [MODEL.md](MODEL.md) first.
 
 - A uv project: run everything as `(cd learn && uv run ...)`. Tests: `uv run pytest -q`; the RunPod lane's offline tests run from here too: `uv run pytest ../cloud/tests -q`.
-- Train only through the train-model skill. The defaults are the settings (the baseline genome, `genome.BASELINE`: batch 2048, lr 6e-4, dropout 0.1 in the encoder and dynamics, sensors hidden in 10% of windows; patience 2000, the Mac's GPU). A flag is only for a named experiment.
+- Train only through the train-model skill. The defaults are the settings (the baseline genome, `genome.BASELINE`: batch 2048, lr 6e-4, dropout 0.1 in the encoder and dynamics, sensors hidden in 10% of windows, the loss weighing the lidar 3x, IR 2x and bumps 0.5x; patience 2000, the Mac's GPU). A flag is only for a named experiment.
 - One training at a time (`ps aux | grep '[p]et_learn'`). While one runs, don't change, stash or check out code in `learn/`.
 - Each model in `../data/models/` has a run record (`<model>.json`); compare with `uv run python -m pet_learn.runs`. Compare only with the same data fingerprint and code version, one difference at a time. Report test numbers (90-100% of each session's scored driving), not val numbers.
 - Splits: train 0-80%, val 80-90% (picks the iteration, and is the evolve score), test 90-100%, all over scored driving. Usable = within 60 s of the last scan; scored = within 10 s of a scan, with the wheels powered. Every archived evolve score depends on these: don't change them casually.

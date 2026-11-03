@@ -17,7 +17,8 @@ def test_the_baseline_genome_is_the_tuned_one_and_names_every_axis():
     g = genomes.load()
     assert set(g['chunks']) == set(genomes.AXES)
     params = {axis: genomes.impl(g, axis)[1] for axis in genomes.AXES}
-    assert params == {'arch': {'enc_dropout': 0.1, 'dyn_dropout': 0.1}, 'objective': {},
+    assert params == {'arch': {'enc_dropout': 0.1, 'dyn_dropout': 0.1},
+                      'objective': {'scan_weight': 3.0, 'ir_weight': 2.0, 'bump_weight': 0.5},
                       'optim': {'batch': 2048, 'lr': 0.0006, 'weight_decay': 0.001}, 'batcher': {'hide': 0.1}}
     assert genomes.recipe(g).startswith('arch=baseline_mlp')
     for axis in genomes.AXES:  # the same impls as ORIGINAL, whose empty params reproduce the old training
