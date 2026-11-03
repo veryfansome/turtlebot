@@ -154,7 +154,7 @@ def main():
     parser.add_argument('--out-dir', default=os.path.join(data_dir, 'models'))
     parser.add_argument('--final-steps', help='also score on every window of the sessions in this folder')
     # Override some of the baseline genome's params (genome.BASELINE: batch 2048 at 6e-4, hide 0.1,
-    # dropout 0.1 in the encoder and dynamics, weight decay 1e-3; z 64 and hidden 128 from the impl); for a plain run only, not with
+    # dropout 0.1 in the encoder and dynamics, weight decay 1e-3, loss weights lidar 3, IR 2, bump 0.5; z 64 and hidden 128 from the impl); for a plain run only, not with
     # --genome. The rest (depth, dropout, consistency, warmup, decay) are set by a genome JSON: see README.md.
     parser.add_argument('--hide', type=float, help='chance each sensor is hidden from the encoder in a training window (dataset.hide)')
     parser.add_argument('--batch', type=int)

@@ -22,6 +22,11 @@ test error relative to the naive baselines from 0.401 to 0.364. Dropout in the h
 same (1.209 +/- 0.018 against 1.126 +/- 0.020 over 8 seeds) but made the 1 s lidar prediction worse
 (0.727 against 0.710, where without head dropout it's 0.707).
 
+The loss weighs the lidar's term 3x, the IR's 2x and the bump's 0.5x (waves head-w-1, head-w-2,
+head-w-conf-1, 2026-11-02): over 5 fresh seeds this scored 1.240 against 1.212 for equal weights,
+with the lidar's error 1 s ahead 12% lower (0.635 against 0.722) and IR's lower too (0.483 against
+0.502), at about 3% on motor current and 2% on floor speed, and slip AUC 0.875 against 0.908.
+
 ORIGINAL is the same impls with no params: their defaults, which reproduce the training this project
 had before the search existed, bit for bit. A genome that leaves out an axis gets ORIGINAL's, so its
 meaning doesn't change when BASELINE does. Impls are append-only: an archived genome must keep
@@ -41,7 +46,7 @@ ORIGINAL = {'chunks': {
 }}
 BASELINE = {'chunks': {
     'arch': {'impl': 'baseline_mlp', 'params': {'enc_dropout': 0.1, 'dyn_dropout': 0.1}},
-    'objective': {'impl': 'baseline_world_loss', 'params': {}},
+    'objective': {'impl': 'baseline_world_loss', 'params': {'scan_weight': 3.0, 'ir_weight': 2.0, 'bump_weight': 0.5}},
     'optim': {'impl': 'baseline_adamw', 'params': {'batch': 2048, 'lr': 0.0006, 'weight_decay': 0.001}},
     'batcher': {'impl': 'baseline_uniform', 'params': {'hide': 0.1}},
 }}

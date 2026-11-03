@@ -40,7 +40,11 @@
      },
      "objective": {
       "impl": "baseline_world_loss",
-      "params": {}
+      "params": {
+       "scan_weight": 3.0,
+       "ir_weight": 2.0,
+       "bump_weight": 0.5
+      }
      },
      "optim": {
       "impl": "baseline_adamw",

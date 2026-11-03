@@ -1,0 +1,30 @@
+{
+ "name": "head-w-2",
+ "kind": "score",
+ "created": "2026-11-02 17:43:13",
+ "code": "079944d",
+ "genomes": {
+  "head-w-2-baseline": "genomes/head-w-2-baseline.json",
+  "head-w-2-bump0.5": "genomes/head-w-2-bump0.5.json",
+  "head-w-2-bump0.25": "genomes/head-w-2-bump0.25.json",
+  "head-w-2-ir0.5": "genomes/head-w-2-ir0.5.json",
+  "head-w-2-ir1.5": "genomes/head-w-2-ir1.5.json",
+  "head-w-2-ir3": "genomes/head-w-2-ir3.json",
+  "head-w-2-scan2-bump0.5": "genomes/head-w-2-scan2-bump0.5.json",
+  "head-w-2-scan4-bump0.5": "genomes/head-w-2-scan4-bump0.5.json",
+  "head-w-2-scan2-ir1.5-bump0.5": "genomes/head-w-2-scan2-ir1.5-bump0.5.json",
+  "head-w-2-scan4-ir1.5-bump0.5": "genomes/head-w-2-scan4-ir1.5-bump0.5.json",
+  "head-w-2-scan4-ir2-bump0.5": "genomes/head-w-2-scan4-ir2-bump0.5.json"
+ },
+ "chunks": [],
+ "seeds": [
+  3,
+  4,
+  5
+ ],
+ "split": "inner",
+ "mode": "full",
+ "concurrency": 6,
+ "job_timeout_s": 3600,
+ "meta": {}
+}
